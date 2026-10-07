@@ -82,6 +82,16 @@ export interface IDocumentContextGap {
 	 * first line. Default `true`.
 	 */
 	readonly collapsed?: boolean;
+	/**
+	 * Whether the editor draws its own fold control on a fully shown region.
+	 * Default `true`; `false` when the host folds the region from its own control.
+	 */
+	readonly foldControl?: boolean;
+	/**
+	 * Whether the editor draws a band in place of the hidden lines. Default
+	 * `true`; `false` when the host draws the fold inline on the line above.
+	 */
+	readonly band?: boolean;
 }
 
 export interface IDocumentDiff {

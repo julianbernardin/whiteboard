@@ -85,6 +85,101 @@ export function structuralContextScopes(diff: StructuralTextDiff) {
 	return { original: scopes(diff.lhs), modified: scopes(diff.rhs) };
 }
 
+/**
+ * How a collapsed fold reads on its header line, as diffr's TUI draws it:
+ * `opener { ⋯ N lines }`. Zero-based, it hides from the line below the header
+ * through the closer's line, whose text from the closer on (`});`) follows the
+ * pill. Only a fold with an opener, a one-line label, and a closer that starts
+ * its own line qualifies; a summary or any other shape keeps a band of its own.
+ */
+export interface StructuralInlineFold {
+	readonly start: number;
+	readonly end: number;
+	readonly closer: string;
+}
+
+export function structuralInlineFold(region: StructuralRegion, lines: readonly string[]): StructuralInlineFold | undefined {
+	if (region.kind !== "fold" || !region.syntax || bandDetail(region.visibility?.label ?? "")) return undefined;
+	const { start, end } = regionLines(region);
+	const header = region.syntax.start.line, closerLine = region.syntax.end.line;
+	if (closerLine <= header || start !== header + 1 || end > closerLine + 1) return undefined;
+	const text = lines[closerLine] ?? "";
+	const column = utf16Column(text, region.syntax.end.column) - 1;
+	if (text.slice(0, column).trim()) return undefined;
+	return { start: header + 1, end: closerLine + 1, closer: text.slice(column).trim() };
+}
+
+/** A brace's one-based line and UTF-16 column. */
+export interface StructuralBrace {
+	readonly line: number;
+	readonly column: number;
+}
+
+/**
+ * A region the reader can fold, zero-based. `line` is its header: an opener's
+ * line, which stays visible when the body folds, or else the region's own
+ * first line. `rail` is the rows an open fold's rail runs down, below its
+ * header through its closer; only a fold with an opener has one, and its braces.
+ */
+export interface StructuralFoldable {
+	readonly foldStateId: number;
+	readonly line: number;
+	readonly rail?: { readonly start: number; readonly end: number };
+	readonly braces?: { readonly opener: StructuralBrace; readonly closer: StructuralBrace };
+	/** Present when the fold collapses into its header line: the pill's text and the closer after it. */
+	readonly inline?: { readonly label: string; readonly closer: string };
+	/** Whether this region holds the chevron on its header line. */
+	readonly chevron: boolean;
+	/** Whether diffr sends the region collapsed before the reader toggles it. */
+	readonly collapsedByDefault: boolean;
+}
+
+/**
+ * Every region of one side the reader can fold: each fold, and each leaf
+ * diffr labels or collapses. One chevron per row. A fold with an opener keeps
+ * its row over a context scope that starts on the same line, so the chevron
+ * folds the same body the rail below it runs down, and the header stays; past
+ * that, the outermost region keeps the row, and a fold beats a leaf.
+ */
+export function structuralFoldables(source: StructuralSource | undefined): StructuralFoldable[] {
+	const lines = source ? source.text.replace(/\r\n/g, "\n").split("\n") : [];
+	const found: { foldable: Omit<StructuralFoldable, "chevron">; rank: [number, number, number] }[] = [];
+	const visit = (region: StructuralRegion) => {
+		const { start, end } = regionLines(region);
+		const fold = region.kind === "fold";
+		if ((fold || region.visibility?.collapsed === true || !!region.visibility?.label) && end > start) {
+			const syntax = fold ? region.syntax : undefined;
+			const inline = structuralInlineFold(region, lines);
+			const hidden = inline ? inline.end - inline.start - 1 : 0;
+			found.push({
+				foldable: {
+					foldStateId: region.fold_state_id,
+					line: syntax ? syntax.start.line : start,
+					rail: syntax && syntax.end.line > syntax.start.line ? { start: syntax.start.line + 1, end: syntax.end.line } : undefined,
+					braces: syntax ? {
+						opener: { line: syntax.start.line + 1, column: utf16Column(lines[syntax.start.line] ?? "", syntax.start.column) - 1 },
+						closer: { line: syntax.end.line + 1, column: utf16Column(lines[syntax.end.line] ?? "", syntax.end.column) },
+					} : undefined,
+					inline: inline && { label: region.visibility?.label || `${hidden} line${hidden === 1 ? "" : "s"}`, closer: inline.closer },
+					collapsedByDefault: region.visibility?.collapsed === true,
+				},
+				rank: [syntax ? 1 : 0, fold ? 1 : 0, end],
+			});
+		}
+		if (region.kind === "fold") region.children.forEach(visit);
+	};
+	// The root is the whole file; its fold state is the file's own, toggled from the file header.
+	if (source?.root.kind === "fold") source.root.children.forEach(visit);
+	const holder = new Map<number, (typeof found)[number]>();
+	const outranks = (a: [number, number, number], b: [number, number, number]) =>
+		a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2];
+	for (const entry of found) {
+		const held = holder.get(entry.foldable.line);
+		if (!held || outranks(entry.rank, held.rank)) holder.set(entry.foldable.line, entry);
+	}
+	return found.map(entry => ({ ...entry.foldable, chevron: holder.get(entry.foldable.line) === entry }));
+}
+
 function structuralLeaves(root: StructuralRegion): StructuralLeaf[] {
 	const leaves: StructuralLeaf[] = [];
 	const walk = (region: StructuralRegion) => {
@@ -179,6 +274,8 @@ export interface StructuralGap {
 	foldStateId: number;
 	/** False for a bundled docstring: its band shows the bare count, no symbol names. */
 	breadcrumbs: boolean;
+	/** False for a fold that collapses into its header line: the host draws it, the editor adds no band. */
+	band: boolean;
 }
 
 /**
@@ -253,6 +350,8 @@ export function structuralContextGaps(
 	};
 	const lhs = knownRegions(diff.lhs?.root, state);
 	const rhs = knownRegions(diff.rhs?.root, state);
+	const lhsLines = (diff.lhs?.text ?? "").replace(/\r\n/g, "\n").split("\n");
+	const rhsLines = (diff.rhs?.text ?? "").replace(/\r\n/g, "\n").split("\n");
 	// Leaves pair by alignment; folds pair by fold state, the only identity they share across sides.
 	const usedRhs = new Set<StructuralRegion>();
 	const pairs = (left: StructuralRegion, right: StructuralRegion) => {
@@ -263,11 +362,14 @@ export function structuralContextGaps(
 		rhs.find(({ region: right }) => !usedRhs.has(right) && pairs(left, right));
 	const gaps: StructuralGap[] = [];
 	for (const { region: left, collapsed } of lhs) {
-		const hidden = regionLines(left);
 		const partner = counterpart(left);
 		if (partner) {
 			usedRhs.add(partner.region);
-			const right = regionLines(partner.region);
+			// Folded into their header lines only when both sides can be; otherwise both keep the band.
+			const leftInline = structuralInlineFold(left, lhsLines), rightInline = structuralInlineFold(partner.region, rhsLines);
+			const inline = leftInline && rightInline;
+			const hidden = inline ? leftInline : regionLines(left);
+			const right = inline ? rightInline : regionLines(partner.region);
 			gaps.push({
 				originalStart: hidden.start + 1, originalCount: hidden.end - hidden.start,
 				modifiedStart: right.start + 1, modifiedCount: right.end - right.start,
@@ -276,26 +378,32 @@ export function structuralContextGaps(
 				collapsed: collapsed && partner.collapsed,
 				foldStateId: left.fold_state_id,
 				breadcrumbs: !isDocstring(left) && !isDocstring(partner.region),
+				band: !inline,
 			});
 			continue;
 		}
+		// A base-only fold keeps its band: unified layout shows the base side in zones, with no header line to fold into.
+		const hidden = regionLines(left);
 		const opposite = oppositeSpan(0, hidden);
 		gaps.push({
 			originalStart: hidden.start + 1, originalCount: hidden.end - hidden.start,
 			modifiedStart: opposite.start, modifiedCount: opposite.count,
 			label: left.visibility?.label || "", owner: "base", change: "unchanged", collapsed, foldStateId: left.fold_state_id,
 			breadcrumbs: !isDocstring(left),
+			band: true,
 		});
 	}
 	for (const { region: right, collapsed } of rhs) {
 		if (usedRhs.has(right)) continue;
-		const hidden = regionLines(right);
+		const inline = structuralInlineFold(right, rhsLines);
+		const hidden = inline ?? regionLines(right);
 		const opposite = oppositeSpan(1, hidden);
 		gaps.push({
 			originalStart: opposite.start, originalCount: opposite.count,
 			modifiedStart: hidden.start + 1, modifiedCount: hidden.end - hidden.start,
 			label: right.visibility?.label || "", owner: "head", change: "unchanged", collapsed, foldStateId: right.fold_state_id,
 			breadcrumbs: !isDocstring(right),
+			band: !inline,
 		});
 	}
 	// Ownership says which fold state to toggle, never whether its contents were deleted.
@@ -311,6 +419,17 @@ export function structuralContextGaps(
 		gap.change = removed && added ? "modified" : removed ? "removed" : added ? "inserted" : "unchanged";
 	}
 	gaps.sort((a, b) => (a.modifiedStart - b.modifiedStart) || (a.originalStart - b.originalStart));
+	// A rewritten region folds on both sides under two fold states, each one-sided, and the zip puts the
+	// two bodies on the same rows. A one-sided fold whose lines another folded region already hides on
+	// both sides would show as a second band for the same rows; the reader sees the one that holds it.
+	const within = (inner: StructuralGap, outer: StructuralGap) =>
+		inner.originalStart >= outer.originalStart && inner.originalStart + inner.originalCount <= outer.originalStart + outer.originalCount &&
+		inner.modifiedStart >= outer.modifiedStart && inner.modifiedStart + inner.modifiedCount <= outer.modifiedStart + outer.modifiedCount;
+	// Of two that hide the same lines, the first stays.
+	const subsumed = (gap: StructuralGap, index: number) => gaps.some((other, at) =>
+		at !== index && other.collapsed && within(gap, other) && !(within(other, gap) && at > index));
+	const shown = gaps.filter((gap, index) => gap.owner === "both" || !gap.collapsed || !subsumed(gap, index));
+	gaps.splice(0, gaps.length, ...shown);
 	for (const gap of gaps) if (!gap.label) {
 		const count = Math.max(gap.originalCount, gap.modifiedCount);
 		gap.label = `${count} hidden line${count === 1 ? "" : "s"}`;

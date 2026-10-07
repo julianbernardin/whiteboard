@@ -13,6 +13,7 @@ import { ICodeEditor, IOverlayWidget, IViewZone } from '../../editorBrowser.js';
 import { Position } from '../../../common/core/position.js';
 import { Range } from '../../../common/core/range.js';
 import { DetailedLineRangeMapping } from '../../../common/diff/rangeMapping.js';
+import { LineRange } from '../../../common/core/ranges/lineRange.js';
 import { IModelDeltaDecoration } from '../../../common/model.js';
 import { TextLength } from '../../../common/core/text/textLength.js';
 
@@ -564,16 +565,26 @@ export interface IBandRegion {
 	readonly label: string | undefined;
 	readLabel?(reader: IReader | undefined): string | undefined;
 	shouldHideControls(reader: IReader | undefined): boolean;
+	/** False when the region folds inline and takes no band of its own. */
+	readonly band?: boolean;
+}
+
+/**
+ * Whether a region hides lines that exist on the base side only. Unified layout draws such a fold
+ * inside the removed block that holds its lines, as a placeholder row, and gives it no band.
+ */
+export function isRemovedOnlyFold(region: { readonly owner: 'base' | 'head' | 'both'; readonly modifiedUnchangedRange: LineRange }): boolean {
+	return region.owner === 'base' && region.modifiedUnchangedRange.isEmpty;
 }
 
 /**
  * The height of the band the region at `index` shows, or undefined when it shows none: a fully revealed
- * region has no band, and compact mode drops the first and last. The band zones and the side-by-side
+ * region has no band, nor does one folded inline, and compact mode drops the first and last. The band zones and the side-by-side
  * alignment both size a band here, so a one-sided band gets exactly its height of room on the other side.
  */
 export function bandZoneHeightPx(regions: readonly IBandRegion[], index: number, compactMode: boolean, lineHeight: number, reader: IReader | undefined): number | undefined {
 	const region = regions[index];
-	if (region.shouldHideControls(reader)) { return undefined; }
+	if (region.shouldHideControls(reader) || region.band === false) { return undefined; }
 	if (compactMode) { return index === 0 || index === regions.length - 1 ? undefined : 12; }
 	return bandHeightPx(region.readLabel ? region.readLabel(reader) : region.label, lineHeight);
 }
