@@ -64,7 +64,12 @@ async function change(
 
 async function render(
   reviewId: string,
-  options: { historical?: boolean; shared?: boolean; failLinks?: boolean } = {},
+  options: {
+    historical?: boolean;
+    shared?: boolean;
+    failLinks?: boolean;
+    beforeRead?: () => Promise<void>;
+  } = {},
 ) {
   const app = new Hono().route("/reviews-api", createReviewApi(store));
   const requests: string[] = [];
@@ -72,6 +77,7 @@ async function render(
     {},
     {
       request: async (url, init) => {
+        if (String(url).includes("?full=true")) await options.beforeRead?.();
         if (init?.method === "POST") {
           const operation = JSON.parse(String(init.body)).operation;
           requests.push(operation.type);
@@ -97,6 +103,55 @@ async function render(
   );
   return requests;
 }
+
+it("keeps the draft closed to a second edit during editing and saving, then restores focus", async () => {
+  const project = await store.execute({
+    operation: {
+      type: "create",
+      kind: "project",
+      title: "Alpha",
+      project: { links: ["https://first.test"] },
+    },
+  });
+  let releaseRead!: () => void;
+  const pendingRead = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  const requests = await render(project.reviewId, {
+    beforeRead: () => pendingRead,
+  });
+  const originalTrigger = button("Edit project");
+  await act(async () => originalTrigger.click());
+  await change(container.querySelector("input")!, "Draft title");
+  await change(container.querySelector("textarea")!, "https://draft.test");
+  expect(button("Edit project")).toBeUndefined();
+  await act(async () => originalTrigger.click());
+  expect(container.querySelector("input")!.value).toBe("Draft title");
+  expect(container.querySelector("textarea")!.value).toBe("https://draft.test");
+
+  await act(async () => container.querySelector("form")!.requestSubmit());
+  expect(container.textContent).toContain("Saving");
+  expect(button("Edit project")).toBeUndefined();
+  await act(async () => originalTrigger.click());
+  expect(requests).toEqual([]);
+  expect(container.querySelector("input")!.value).toBe("Draft title");
+
+  await act(async () => releaseRead());
+  await vi.waitFor(() =>
+    expect(requests).toEqual(["rename", "project_update"]),
+  );
+  await vi.waitFor(() => expect(container.querySelector("form")).toBeNull());
+  await vi.waitFor(() =>
+    expect(document.activeElement).toBe(button("Edit project")),
+  );
+  await render(project.reviewId);
+  await act(async () => button("Edit project").click());
+  expect(container.querySelector("input")!.value).toBe("Draft title");
+  await act(async () => button("Cancel").click());
+  await vi.waitFor(() =>
+    expect(document.activeElement).toBe(button("Edit project")),
+  );
+});
 
 it("shows named/default links securely, guards read-only, and preserves versions on cancel, Escape, invalid input and no-op", async () => {
   await store.ensureDefaultProject();

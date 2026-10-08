@@ -40,6 +40,7 @@ export function ProjectMetadataEditor({ snapshot }: { snapshot: Snapshot }) {
   const [conflict, setConflict] = useState<Metadata | null>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const restoreFocusRef = useRef(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const titleErrorId = useId();
@@ -51,7 +52,12 @@ export function ProjectMetadataEditor({ snapshot }: { snapshot: Snapshot }) {
     session.review?.historicalRevision == null;
 
   useEffect(() => {
-    if (opened) titleRef.current?.focus();
+    if (opened) {
+      titleRef.current?.focus();
+    } else if (restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      triggerRef.current?.focus();
+    }
   }, [opened !== null]);
 
   const close = () => {
@@ -60,10 +66,11 @@ export function ProjectMetadataEditor({ snapshot }: { snapshot: Snapshot }) {
     setConflict(null);
     setMessage("");
     setFieldError(null);
-    requestAnimationFrame(() => triggerRef.current?.focus());
+    restoreFocusRef.current = true;
   };
 
   const open = () => {
+    if (opened || savingRef.current) return;
     const current = metadata(snapshot);
     setOpened(current);
     setTitle(current.title);
@@ -163,7 +170,7 @@ export function ProjectMetadataEditor({ snapshot }: { snapshot: Snapshot }) {
       // The live follow stream remains authoritative for the displayed metadata.
       setOpened(null);
       setMessage("");
-      requestAnimationFrame(() => triggerRef.current?.focus());
+      restoreFocusRef.current = true;
     } catch (cause) {
       if (renamed) {
         try {
@@ -204,7 +211,7 @@ export function ProjectMetadataEditor({ snapshot }: { snapshot: Snapshot }) {
           alignItems: "center",
         }}
       >
-        {editable && (
+        {editable && opened === null && (
           <button
             ref={triggerRef}
             type="button"
