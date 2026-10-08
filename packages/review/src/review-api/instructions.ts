@@ -10,6 +10,7 @@ export const INSTRUCTION_TOPICS = [
   "authoring",
   "file-lenses",
   "scratchpad",
+  "project",
   "trace-archaeology",
 ] as const;
 
@@ -58,12 +59,13 @@ export async function renderInstructions(
   if (topic === "trace-archaeology" && !context.traceEnabled)
     return "Trace capture is off on this machine, so no agent traces are available. It can be turned on in Whiteboard Desktop Settings under Experimental Features.";
 
-  if (topic === "scratchpad")
+  if (topic === "scratchpad" || topic === "project")
     return `${await read(root, topic)}\n\n${COMPONENT_REFERENCE}`;
 
   if (topic !== "authoring") return read(root, topic);
 
   const more = [
+    '- Generic versioned Project documents: `session_get_instructions({topic:"project"})`',
     ...(scratchpadAvailable(context)
       ? [
           '- Explaining code visually outside a review: `session_get_instructions({topic:"scratchpad"})`',

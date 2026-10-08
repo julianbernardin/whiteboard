@@ -93,6 +93,13 @@ export async function callPublicTool(
   if ("reviewId" in input) throw new Error("Use sessionId with session tools.");
   const { sessionId, ...rest } = input;
 
+  if (
+    tool.name === "session_list" ||
+    (sessionId === "project" &&
+      Object.hasOwn(tool.inputSchema.properties ?? {}, "sessionId"))
+  )
+    await client.post("/projects/default/ensure", {}, signal);
+
   const fields: Parameters<typeof callAuthoringTool>[2] = { ...rest };
 
   if (sessionId !== undefined) fields.reviewId = sessionId;

@@ -36,7 +36,7 @@ export function authoringTools(
 
   const descriptions = {
     create:
-      'Create a review of saved working files, immutable commits or a GitHub PR. Revisions are resolved on acceptance. A worktree target reviews the saved files in its checkout, uncommitted ones included and untracked ones left out (git add -N a new file to include it), against base: the branch to compare against, by default the default branch of the repository. The diff starts at the merge base of base and HEAD, which follows rebases. Omitted commits base means source at head with no diff; supply the parent to review introduced changes. For a GitHub PR, pullRequestUrl alone is enough: target and title become optional, and the host fetches the PR into a registered checkout of its repository and pins the current PR head and GitHub diff base, titled from the PR. When a review for that PR exists, it is returned instead, reporting whether its head moved and whether an agent is working on it; update it in place, move its target with review_set_target, or create a separate review with reuseExisting. kind:"scratchpad" names the one scratchpad, which the host creates itself. The result carries review, the review as review_list shows it: its target with resolved commits, origin (its PR), repositoryName and repositoryPath, so no follow-up read is needed before diffing. When Desktop is available the review opens there and the result reports opened, softwareMapEnabled and environmentIssues, as review_open does; set open:false to author in the background without taking over Desktop.',
+      'Create a review of saved working files, immutable commits or a GitHub PR. Revisions are resolved on acceptance. A worktree target reviews the saved files in its checkout, uncommitted ones included and untracked ones left out (git add -N a new file to include it), against base: the branch to compare against, by default the default branch of the repository. The diff starts at the merge base of base and HEAD, which follows rebases. Omitted commits base means source at head with no diff; supply the parent to review introduced changes. For a GitHub PR, pullRequestUrl alone is enough: target and title become optional, and the host fetches the PR into a registered checkout of its repository and pins the current PR head and GitHub diff base, titled from the PR. When a review for that PR exists, it is returned instead, reporting whether its head moved and whether an agent is working on it; update it in place, move its target with review_set_target, or create a separate review with reuseExisting. kind:"scratchpad" names the one scratchpad, which the host creates itself. kind:"project" without title ensures the fixed default Project; with a nonblank title it creates an additional Project with a UUID and optional project.links. Projects do not take review targets or PR fields. The result carries review, the review as review_list shows it: its target with resolved commits, origin (its PR), repositoryName and repositoryPath, so no follow-up read is needed before diffing. When Desktop is available the review opens there and the result reports opened, softwareMapEnabled and environmentIssues, as review_open does; set open:false to author in the background without taking over Desktop.',
     set_target:
       "Move the review to a new target, such as the commits after a rebase or amend, preserving the document and component IDs. Revisions are resolved on acceptance. Returns warnings for retained source ranges in files the new commits changed, to verify, and resources that no longer match; fix them with review_edit. Earlier versions keep their source. Omitted pullRequestUrl keeps the PR within the same repository; changing repositories clears it. Supply a URL to replace it or null to detach.",
     edit: [
@@ -48,10 +48,11 @@ export function authoringTools(
     ].join("\n"),
     lens_edit:
       "Edit one Diff-view lens. Lenses partition the review's change for the Diff view; they sit beside the document (never in it) and version with it. The host assigns durable lens IDs; updates replace only the fields supplied. Write one lens per call while a reader may be watching; each draws in on the Diffs page. Pass your activityId so your courier draws each lens. The result identifies the lens and reports uncategorized: changed lines no lens selects yet, grouped by file. Keep adding lenses until it is empty or what remains is deliberate. review_lens_get reads the current lenses and gaps.",
-    project_update: "Update a project's links.",
-    rename: "Change the review title.",
+    project_update:
+      "Replace all of a Project's links with this ordered HTTPS URL array; this is not an append operation.",
+    rename: "Change the session title.",
     restore:
-      "Restore title, source pins, PR identity and content from a saved version.",
+      "Restore title, source pins, PR identity, Project links and content from a saved version.",
     attention:
       "Mark a review viewed, dismissed or restored without changing its content.",
     delete: "Permanently delete this review and its history.",
@@ -91,6 +92,7 @@ export function authoringTools(
         (traceEnabled
           ? ' Call review_get_instructions({topic:"trace-archaeology"}) for why code exists, what an agent was thinking, or whether an agent solved this before.'
           : "") +
+        ' For a Project document, call review_get_instructions({topic:"project"}) regardless of scratchpad availability.' +
         (scratchpadAvailable
           ? ' When the user asks in conversation to be shown how code works or wants a diagram, without asking for a review, draw it on the scratchpad rather than answering only in chat: call review_get_instructions({topic:"scratchpad"}) first. A request for a review or to use Whiteboard means authoring a review with the default topic.'
           : ""),
@@ -119,44 +121,49 @@ export function authoringTools(
       "POST",
       "/:reviewId/activity/end",
     ),
-    ...commandSchema.shape.operation.options
-      .filter((operation) => operation.shape.type.value !== "project_update")
-      .map((operation) => {
-        const type = operation.shape.type.value;
+    ...commandSchema.shape.operation.options.map((operation) => {
+      const type = operation.shape.type.value;
 
-        // Agents name a checkout by its path; /commands registers it.
-        const {
-          type: _type,
-          repositoryId: _repositoryId,
-          project: _project,
-          kind: _kind,
-          ...fields
-        }: Record<string, z.ZodType> = operation.shape;
+      // Agents name a checkout by its path; /commands registers it.
+      const {
+        type: _type,
+        repositoryId: _repositoryId,
+        project: _project,
+        kind: _kind,
+        ...fields
+      }: Record<string, z.ZodType> = operation.shape;
 
-        return tool(
-          type,
-          descriptions[type],
-          z.strictObject({
-            ...fields,
-            ...(type === "create" && {
-              kind: z.literal("scratchpad").optional(),
-              target: pathTargetSchema.optional(),
-              repositoryPath: id
-                .optional()
-                .describe(
-                  "Only with pullRequestUrl and no target: the local checkout to fetch the PR into. Default: the existing review's, else the first registered checkout with a remote for the PR's repository.",
-                ),
-              open: z.boolean().optional(),
-            }),
-            ...(type === "set_target" && { target: pathTargetSchema }),
-            ...(type === "edit" && { edit: publishedEditSchema }),
+      return tool(
+        type,
+        descriptions[type],
+        z.strictObject({
+          ...fields,
+          ...(type === "create" && {
+            kind: z.enum(["scratchpad", "project"]).optional(),
+            project: _project,
+            target: pathTargetSchema.optional(),
+            repositoryPath: id
+              .optional()
+              .describe(
+                "Only with pullRequestUrl and no target: the local checkout to fetch the PR into. Default: the existing review's, else the first registered checkout with a remote for the PR's repository.",
+              ),
+            open: z.boolean().optional(),
           }),
-          "POST",
-          "/commands",
-          type,
-        );
-      }),
-    tool("list", "List saved reviews.", z.strictObject({}), "GET", ""),
+          ...(type === "set_target" && { target: pathTargetSchema }),
+          ...(type === "edit" && { edit: publishedEditSchema }),
+        }),
+        "POST",
+        "/commands",
+        type,
+      );
+    }),
+    tool(
+      "list",
+      "List saved reviews, Projects and the scratchpad with their kinds, titles, IDs and Project links.",
+      z.strictObject({}),
+      "GET",
+      "",
+    ),
     tool(
       "get",
       "Read a readable, nested text outline with editable IDs. targetId reads one component in full; full:true reads all content. Use format:json for raw node data or snapshots instead of text.",
@@ -180,7 +187,7 @@ export function authoringTools(
     ),
     tool(
       "open",
-      "Show an existing review immediately and prepare current pinned checkouts in the background. Returns softwareMapEnabled and any already-recorded environmentIssues. Missing optional setup is not an issue; use review_environment to recheck.",
+      "Show an existing session immediately in Desktop and prepare current pinned checkouts when applicable. Returns softwareMapEnabled and any already-recorded environmentIssues. Missing optional setup is not an issue; use review_environment to recheck.",
       z.strictObject(review),
       "POST",
       "/:reviewId/open",
@@ -201,7 +208,7 @@ export function authoringTools(
     ),
     tool(
       "register_repository",
-      "Register a local Git or jj repository and return its id, for pins on scratchpad blocks. session_create and session_set_target take the checkout's path instead.",
+      "Register a local Git or jj repository and return its id, for explicit pins on Project or scratchpad blocks. session_create and session_set_target take the checkout's path for reviews instead.",
       z.strictObject({ path: id }),
       "POST",
       "/repositories",

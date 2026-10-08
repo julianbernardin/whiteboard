@@ -81,24 +81,6 @@ const edit = <Content>(reviewId: string, value: Content) =>
 const writeLens = <Edit>(reviewId: string, value: Edit) =>
   store.execute(request({ type: "lens_edit", reviewId, edit: value }));
 
-it("keeps Project commands out of the published authoring catalog", () => {
-  const tools = authoringTools();
-  const names = tools.map((tool) => tool.name);
-  expect(names).toContain("review_create");
-  expect(names).toContain("review_edit");
-  expect(names).toContain("review_open");
-  expect(names).not.toContain("review_project_update");
-  const createSchema = tools.find(
-    (tool) => tool.name === "review_create",
-  )!.inputSchema;
-  expect(createSchema.properties).not.toHaveProperty("project");
-  const kind = Object.entries(createSchema.properties ?? {}).find(
-    ([name]) => name === "kind",
-  )?.[1];
-  expect(kind).toMatchObject({ const: "scratchpad" });
-  expect(JSON.stringify(kind)).not.toContain("project");
-});
-
 beforeEach(() => {
   directory = mkdtempSync(path.join(tmpdir(), "review-lean-"));
   database = path.join(directory, "reviews.db");
@@ -155,6 +137,57 @@ it("ensures the default Project by POST while catalog GET stays read-only", asyn
       (item: { reviewId: string }) => item.reviewId === PROJECT_ID,
     ),
   ).toMatchObject({ title: "My Project", version: before.version });
+});
+
+it("creates the default Project idempotently through commands and honors open", async () => {
+  const opened: string[] = [];
+  const created: string[] = [];
+  const api = createReviewApi(
+    store,
+    undefined,
+    async ({ reviewId }) => {
+      opened.push(reviewId);
+      return { softwareMapEnabled: false };
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { onReviewCreated: ({ kind }) => created.push(kind) },
+  );
+  const send = (operation: Record<string, unknown>) =>
+    api.request("/commands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation }),
+    });
+
+  expect(await (await api.request("/")).json()).toEqual([]);
+  const first = await send({ type: "create", kind: "project", open: false });
+  expect(first.status).toBe(200);
+  expect(await first.json()).toMatchObject({
+    reviewId: PROJECT_ID,
+    version: 0,
+    opened: false,
+    review: { kind: "project" },
+  });
+  expect(opened).toEqual([]);
+  expect(created).toEqual(["project"]);
+  const second = await send({ type: "create", kind: "project", open: true });
+  expect((await second.json()).version).toBe(0);
+  expect(opened).toEqual([PROJECT_ID]);
+  expect(created).toEqual(["project"]);
+  for (const extra of [
+    { target: { kind: "commits", ...pins } },
+    { project: { links: [] } },
+    { reuseExisting: true },
+    { title: "  " },
+  ]) {
+    const response = await send({ type: "create", kind: "project", ...extra });
+    expect(response.status).toBe(400);
+    expect(store.read(PROJECT_ID).version).toBe(0);
+  }
 });
 
 it("creates Projects through HTTP commands and rejects invalid links without mutation", async () => {

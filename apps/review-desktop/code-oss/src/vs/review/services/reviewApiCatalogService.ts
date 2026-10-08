@@ -105,7 +105,7 @@ export class ReviewApiCatalogService extends Disposable implements IReviewApiCat
 	async createProject(input: { title: string; links: string[] }): Promise<void> {
 		await this.initialize();
 		await this.client!.post("/commands", {
-			operation: { type: "create", kind: "project", title: input.title, project: { links: input.links } },
+			operation: { type: "create", kind: "project", title: input.title, project: { links: input.links }, open: false },
 		});
 	}
 

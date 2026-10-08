@@ -36,6 +36,7 @@ describe("renderInstructions", () => {
         authoring: "AUTHORING_WORKFLOW",
         "file-lenses": "LENS_GUIDANCE",
         scratchpad: "SCRATCHPAD_GUIDANCE",
+        project: "PROJECT_GUIDANCE",
         "trace-archaeology": "TRACE_GUIDANCE",
       }).map(([name, content]) =>
         writeFile(path.join(root, "instructions", `${name}.md`), content),
@@ -87,6 +88,27 @@ describe("renderInstructions", () => {
         root,
       ),
     ).not.toContain("SCRATCHPAD_GUIDANCE");
+  });
+
+  it("serves Project guidance without Desktop or scratchpad", async () => {
+    const context = {
+      ...live,
+      desktopAvailable: false,
+      scratchpadEnabled: false,
+    };
+    expect(await renderInstructions("project", context, root)).toContain(
+      "PROJECT_GUIDANCE",
+    );
+    expect(await renderInstructions("authoring", context, root)).toContain(
+      'topic:"project"',
+    );
+    const packaged = await renderInstructions("project", context);
+    expect(packaged).toContain('sessionId:"project"');
+    expect(packaged).toContain("UUID");
+    expect(packaged).toContain("repositoryId");
+    expect(await renderInstructions("scratchpad", context, root)).not.toContain(
+      "SCRATCHPAD_GUIDANCE",
+    );
   });
 
   it("serves other fixed topics without Desktop", async () => {
@@ -421,6 +443,68 @@ const initialize = {
 };
 
 describe("whiteboard mcp instructions", () => {
+  it("publishes and calls Project tools through the MCP transport", async () => {
+    const store = new ReviewStore(":memory:", {
+      validatePins: async () => {},
+      validateSource: async () => {},
+      validateResource: async () => {},
+    });
+    const app = createReviewApi(store);
+    const client = new ReviewApiClient(
+      { serverUrl: "http://review.test", token: "test" },
+      async (url, init) => app.request(url.replace("/reviews-api", ""), init),
+    );
+    const mcp = await startMcp(async () => client);
+    try {
+      await mcp.request(1, "initialize", initialize);
+      const listed = await mcp.request(2, "tools/list", {});
+      const tools = listed.result.tools as Array<{
+        name: string;
+        inputSchema: { properties?: Record<string, unknown> };
+      }>;
+      expect(tools.map(({ name }) => name)).toContain("session_project_update");
+      expect(
+        JSON.stringify(
+          tools.find(({ name }) => name === "session_create")?.inputSchema
+            .properties?.kind,
+        ),
+      ).toContain("project");
+      let id = 3;
+      const call = async (name: string, args: Record<string, unknown>) => {
+        const response = await mcp.request(id++, "tools/call", {
+          name,
+          arguments: args,
+        });
+        expect(response.result.isError).toBeFalsy();
+        return JSON.parse(response.result.content[0].text as string);
+      };
+      const created = await call("session_create", {
+        kind: "project",
+        open: false,
+      });
+      expect(created.sessionId).toBe("project");
+      const sessions = await call("session_list", {});
+      expect(sessions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sessionId: "project", kind: "project" }),
+        ]),
+      );
+      await call("session_project_update", {
+        sessionId: "project",
+        links: ["https://example.com"],
+      });
+      const snapshot = await call("session_get", {
+        sessionId: "project",
+        format: "json",
+        full: true,
+      });
+      expect(JSON.stringify(snapshot)).toContain("https://example.com");
+    } finally {
+      await mcp.close();
+      store.close();
+    }
+  });
+
   it("lists and answers while down, then serves guidance through a restart", async () => {
     let up = false;
     let connections = 0;

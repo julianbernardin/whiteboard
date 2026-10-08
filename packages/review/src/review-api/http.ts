@@ -143,7 +143,7 @@ const SCRATCHPAD_DISABLED =
 export interface ReviewApiHooks {
   onReviewCreated?: (event: {
     reviewId: string;
-    kind: "review" | "scratchpad";
+    kind: "review" | "scratchpad" | "project";
     blocks: number;
     via: ReviewRequestVia;
     agentKind?: ReviewSessionAgent;
@@ -1673,6 +1673,40 @@ export function createReviewApi(
       await readBoundedRequestJson(context.req.raw),
     );
 
+    // The default Project is a host-owned fixed id, never a Store create option.
+    if (
+      isJsonObject(body) &&
+      isJsonObject(body.operation) &&
+      body.operation.type === "create" &&
+      body.operation.kind === "project" &&
+      !Object.hasOwn(body.operation, "title")
+    ) {
+      z.strictObject({
+        operation: z.strictObject({
+          type: z.literal("create"),
+          kind: z.literal("project"),
+        }),
+      }).parse(body);
+      const created = !store.has("project");
+      await store.ensureDefaultProject();
+      const snapshot = store.read("project");
+      if (created)
+        hooks.onReviewCreated?.({
+          reviewId: "project",
+          kind: "project",
+          blocks: snapshot.document.length,
+          ...reviewRequestOrigin(context.req.raw.headers),
+        });
+      return context.json({
+        reviewId: "project",
+        version: snapshot.version,
+        review: store.summary("project"),
+        ...(requestedOpen === false
+          ? { opened: false }
+          : await openCreated("project")),
+      });
+    }
+
     const request = await locateRepositories(body, (path) => {
       if (!data) throw new ReviewInputError("Repositories are unavailable.");
 
@@ -1766,7 +1800,7 @@ export function createReviewApi(
     if (result.created !== false)
       hooks.onReviewCreated?.({
         reviewId: result.reviewId,
-        kind: input.operation.kind === "scratchpad" ? "scratchpad" : "review",
+        kind: input.operation.kind ?? "review",
         blocks: store.read(result.reviewId).document.length,
         ...reviewRequestOrigin(context.req.raw.headers),
       });
