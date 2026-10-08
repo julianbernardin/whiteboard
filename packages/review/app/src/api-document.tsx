@@ -229,6 +229,13 @@ export function ApiDocument({
       {!hasTitle && !scratchpad && (
         <ReviewDocumentTitle>{data.snapshot.title}</ReviewDocumentTitle>
       )}
+      {data.snapshot.kind === "project" &&
+        data.snapshot.document.length === 0 && (
+          <p style={{ opacity: 0.7 }}>
+            This Project has no content yet. Add Markdown or diagrams through
+            Whiteboard session tools.
+          </p>
+        )}
       <DocumentBlocks
         nodes={data.snapshot.document}
         data={data}

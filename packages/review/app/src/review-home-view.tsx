@@ -452,8 +452,6 @@ function ProjectsTable({
           </thead>
           <tbody>
             {sorted.map((project, index) => {
-              const first = project.project?.links[0];
-              const rest = (project.project?.links.length ?? 0) - 1;
               const last = index === sorted.length - 1;
               return (
                 <tr
@@ -480,24 +478,7 @@ function ProjectsTable({
                     </button>
                   </td>
                   <td {...stylex.props(styles.td, last && styles.lastRowCell)}>
-                    {first ? (
-                      <>
-                        <a
-                          {...stylex.props(styles.projectLink)}
-                          href={first}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={first}
-                          aria-label={first}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          {new URL(first).hostname}
-                        </a>
-                        {rest > 0 ? ` +${rest}` : null}
-                      </>
-                    ) : (
-                      "—"
-                    )}
+                    <ProjectLinks links={project.project?.links ?? []} />
                   </td>
                   <td
                     {...stylex.props(
@@ -528,6 +509,74 @@ function ProjectsTable({
         </table>
       </div>
     </section>
+  );
+}
+
+function ProjectLinks({ links }: { links: readonly string[] }) {
+  const [open, setOpen] = useState(false);
+  const container = useRef<HTMLSpanElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: MouseEvent) => {
+      if (!container.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      trigger.current?.focus();
+    };
+    document.addEventListener("mousedown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  if (links.length === 0) return <>—</>;
+  const link = (url: string) => (
+    <a
+      key={url}
+      {...stylex.props(styles.projectLink)}
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={url}
+      aria-label={url}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {new URL(url).hostname}
+    </a>
+  );
+
+  return (
+    <span ref={container} {...stylex.props(styles.projectLinks)}>
+      {link(links[0]!)}
+      {links.length > 1 && (
+        <>
+          <button
+            ref={trigger}
+            type="button"
+            aria-label={`Show ${links.length - 1} more links`}
+            aria-expanded={open}
+            {...stylex.props(styles.projectMoreLinks)}
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen(!open);
+            }}
+          >
+            +{links.length - 1}
+          </button>
+          {open && (
+            <span {...stylex.props(styles.projectLinksPopover)}>
+              {links.slice(1).map(link)}
+            </span>
+          )}
+        </>
+      )}
+    </span>
   );
 }
 
@@ -1335,6 +1384,32 @@ const styles = stylex.create({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     verticalAlign: "middle",
+  },
+  projectLinks: {
+    display: "inline-flex",
+    flexWrap: "wrap",
+    alignItems: "baseline",
+    gap: "6px",
+  },
+  projectMoreLinks: {
+    padding: "2px 4px",
+    borderWidth: 0,
+    borderStyle: "none",
+    backgroundColor: tokens.transparent,
+    color: tokens.accent,
+    cursor: "pointer",
+  },
+  projectLinksPopover: {
+    display: "inline-flex",
+    flexDirection: "column",
+    gap: "6px",
+    minWidth: "160px",
+    padding: "8px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: tokens.rule,
+    borderRadius: radius.control,
+    backgroundColor: tokens.surface,
   },
   headerTools: {
     display: "flex",

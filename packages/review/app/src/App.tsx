@@ -295,6 +295,8 @@ function ReviewLayoutContent({
   // The scratchpad is a document and nothing else: no source tree to browse,
   // nothing to share, nothing to dismiss.
   const scratchpad = session.review?.kind === "scratchpad";
+  const project = session.review?.kind === "project";
+  const freeform = scratchpad || project;
   useEffect(() => {
     if (scratchpad) captureUiEvent(session, "scratchpad_opened");
   }, [scratchpad, session]);
@@ -412,9 +414,9 @@ function ReviewLayoutContent({
   const storedList = useTraceList();
   const diffFiles = useReviewDiffFiles();
 
-  // The scratchpad has no repository of its own, so no traces to show.
+  // Freeform documents have no source pins of their own, so no traces to show.
   const hasTraceSessions =
-    !scratchpad &&
+    !freeform &&
     ((session.review?.traces.size ?? 0) > 0 ||
       storedList.status !== "loaded" ||
       storedList.sessions.length > 0);
@@ -428,11 +430,11 @@ function ReviewLayoutContent({
   const reviewViews = useMemo(
     () =>
       offeredReviewViews({
-        hasChangeRange,
+        hasChangeRange: !freeform && hasChangeRange,
         softwareMapEnabled,
         hasTraceSessions,
       }),
-    [hasChangeRange, hasTraceSessions, softwareMapEnabled],
+    [freeform, hasChangeRange, hasTraceSessions, softwareMapEnabled],
   );
 
   useLayoutEffect(() => {
@@ -536,9 +538,13 @@ function ReviewLayoutContent({
                     key={view}
                     type="button"
                     aria-label={
-                      view === "map"
-                        ? "Map (Experimental)"
-                        : reviewViewLabel(view)
+                      view === "review" && freeform
+                        ? scratchpad
+                          ? "Scratchpad"
+                          : "Project"
+                        : view === "map"
+                          ? "Map (Experimental)"
+                          : reviewViewLabel(view)
                     }
                     aria-pressed={activeView === view}
                     title={view === "map" ? "Map (Experimental)" : undefined}
@@ -564,7 +570,13 @@ function ReviewLayoutContent({
                   >
                     {view === "review" ? (
                       <ReviewSurfaceLabel
-                        label={scratchpad ? "Scratchpad" : "Whiteboard"}
+                        label={
+                          scratchpad
+                            ? "Scratchpad"
+                            : project
+                              ? "Project"
+                              : "Whiteboard"
+                        }
                         hasContent={document.empty === false}
                         active={activeView === "review"}
                       />
@@ -607,7 +619,7 @@ function ReviewLayoutContent({
                   shellStyles.topbarContext,
                 )}
               >
-                {!scratchpad && (
+                {!freeform && (
                   <Button
                     variant="ghost"
                     xstyle={shellStyles.openSourceTree}
@@ -645,7 +657,7 @@ function ReviewLayoutContent({
               </div>
               <ReviewStackSelector />
               <AskHistoryControl />
-              <ShareControl />
+              {!project && <ShareControl />}
               <IconButton
                 xstyle={shellStyles.topbarItem}
                 ref={discordTooltip}
@@ -660,9 +672,11 @@ function ReviewLayoutContent({
                 <DiscordIcon xstyle={controlStyles.chromeIcon} />
               </IconButton>
               <BugReportControl />
-              <ReviewBatonChip outcome={review.submissionOutcome} />
-              <DiffLayoutControl />
-              {!scratchpad &&
+              {!project && (
+                <ReviewBatonChip outcome={review.submissionOutcome} />
+              )}
+              {!freeform && <DiffLayoutControl />}
+              {!freeform &&
                 !review.historicalRevision &&
                 !review.submissionOutcome && (
                   <div
@@ -672,7 +686,7 @@ function ReviewLayoutContent({
                     )}
                   />
                 )}
-              {!scratchpad &&
+              {!freeform &&
               !review.historicalRevision &&
               !review.submissionOutcome ? (
                 <ReviewCornerAction />
@@ -714,7 +728,7 @@ function ReviewLayoutContent({
                     documentMarker,
                     rightPanelOpen && documentStyles.articlePeekOpen,
                   )}
-                  data-kind={scratchpad ? "scratchpad" : undefined}
+                  data-kind={freeform ? session.review?.kind : undefined}
                 >
                   <ReviewDocumentBoundary
                     key={documentRevision}

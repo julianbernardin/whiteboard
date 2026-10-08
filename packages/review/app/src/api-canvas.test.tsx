@@ -69,6 +69,125 @@ afterEach(async () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+it("shows an empty Project state and renders later Markdown and code peek", async () => {
+  const project = await command({
+    type: "create",
+    kind: "project",
+    title: "Project notes",
+  });
+  const app = new Hono().route("/reviews-api", createReviewApi(store));
+  const created = vi.fn();
+  const bridge = testReviewBridge(
+    {},
+    {
+      request: async (url, init) => app.request(url, init),
+      inlineEditors: {
+        async find() {
+          return { matchCount: 0 };
+        },
+        create: (spec) => {
+          created(spec);
+          const editor = document.createElement("div");
+          spec.container.appendChild(editor);
+          return {
+            height: 180,
+            setActive() {},
+            setCollapsed() {},
+            async setFindQuery() {
+              return { matchCount: 0 };
+            },
+            revealFindMatch() {},
+            clearActiveFindMatch() {},
+            clearFind() {},
+            onDidChangeHeight: () => ({ dispose() {} }),
+            onDidError: () => ({ dispose() {} }),
+            dispose: () => editor.remove(),
+          };
+        },
+      },
+    },
+  );
+  const container = document.createElement("div");
+  document.body.append(container);
+  await act(async () => {
+    canvas = mount(container, {
+      kind: "api",
+      reviewId: project.reviewId,
+      bridge,
+    });
+  });
+  await act(async () =>
+    vi.waitFor(() =>
+      expect(container.textContent).toContain(
+        "This Project has no content yet",
+      ),
+    ),
+  );
+  expect(
+    container.querySelector('button[aria-label="Project"]'),
+  ).not.toBeNull();
+  expect(container.querySelector('button[aria-label="Trace"]')).toBeNull();
+  expect(
+    container.querySelector('button[aria-label="Source tree ↗"]'),
+  ).toBeNull();
+  expect(
+    container.querySelector('button[aria-label="Share review"]'),
+  ).toBeNull();
+  expect(
+    [...container.querySelectorAll("button")].some(
+      (button) => button.textContent === "Dismiss",
+    ),
+  ).toBe(false);
+
+  await act(async () => canvas?.dispose());
+  canvas = undefined;
+  await command({
+    type: "edit",
+    reviewId: project.reviewId,
+    edit: {
+      type: "insert",
+      content: {
+        type: "markdown",
+        markdown: "## Existing notes\n\nRendered prose",
+      },
+    },
+  });
+  await command({
+    type: "edit",
+    reviewId: project.reviewId,
+    edit: {
+      type: "insert",
+      content: {
+        type: "code_peek",
+        source: rangeAnchor({
+          side: "head",
+          file: "src/example.ts",
+          fromLine: 1,
+          toLine: 2,
+        }),
+        pins: { repositoryId: "repo", head: "a".repeat(40) },
+      },
+    },
+  });
+  await act(async () => {
+    canvas = mount(container, {
+      kind: "api",
+      reviewId: project.reviewId,
+      bridge,
+    });
+  });
+  await act(async () =>
+    vi.waitFor(() =>
+      expect(container.querySelector("h2")?.textContent).toBe("Existing notes"),
+    ),
+  );
+  expect(container.textContent).toContain("Rendered prose");
+  expect(container.textContent).not.toContain(
+    "This Project has no content yet",
+  );
+  expect(container.querySelector(".code-peek")).not.toBeNull();
+});
+
 it("shows agent migration guidance when an old review cannot be loaded", async () => {
   const app = new Hono().route("/reviews-api", createReviewApi(store));
   const container = document.createElement("div");

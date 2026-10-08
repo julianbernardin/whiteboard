@@ -69,6 +69,7 @@ describe("ReviewHome", () => {
     const latest = project(uuid(2), "Latest", "2026-07-04T10:00:00Z", [
       "https://example.org/a",
       "https://example.net/b",
+      "https://example.edu/c",
     ]);
     const review = summary({ reviewId: uuid(3), title: "Review item" });
     const pad = summary({
@@ -97,7 +98,7 @@ describe("ReviewHome", () => {
         (row) => row.querySelector("button")?.textContent,
       ),
     ).toEqual(["Latest", "Project", "Earlier"]);
-    expect(projects.textContent).toContain("+1");
+    expect(projects.textContent).toContain("+2");
     expect(projects.textContent).toContain("—");
     expect(projects.textContent).not.toContain("PR");
     expect(projects.querySelector('[aria-label^="Actions"]')).toBeNull();
@@ -112,6 +113,31 @@ describe("ReviewHome", () => {
     expect(link.rel).toBe("noopener noreferrer");
     expect(link.title).toBe("https://example.org/a");
     await act(async () => link.click());
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(
+      projects.querySelector('a[href="https://example.com/a"]'),
+    ).not.toBeNull();
+    const more = projects.querySelector<HTMLButtonElement>(
+      'button[aria-label="Show 2 more links"]',
+    )!;
+    await act(async () => more.click());
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    for (const url of ["https://example.net/b", "https://example.edu/c"]) {
+      const extra = projects.querySelector<HTMLAnchorElement>(
+        `a[href="${url}"]`,
+      )!;
+      expect(extra).not.toBeNull();
+      expect(extra.title).toBe(url);
+      expect(extra.target).toBe("_blank");
+      expect(extra.rel).toBe("noopener noreferrer");
+      await act(async () => extra.click());
+    }
+    expect(onOpen).not.toHaveBeenCalled();
+    await act(async () =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
+    );
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(more);
     expect(onOpen).not.toHaveBeenCalled();
     await act(async () =>
       projects.querySelector<HTMLButtonElement>("tbody button")!.click(),

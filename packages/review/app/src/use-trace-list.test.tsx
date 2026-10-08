@@ -38,7 +38,7 @@ const listing = (sessionId: string) =>
     ],
   });
 
-function harness() {
+function harness(kind?: "project" | "scratchpad") {
   const requests: { url: URL; resolve(response: Response): void }[] = [];
 
   const session = testReviewSession(
@@ -50,6 +50,8 @@ function harness() {
         ),
     },
   );
+  session.review!.kind = kind;
+  if (kind) session.review!.pins = undefined;
 
   const container = document.createElement("div");
   document.body.append(container);
@@ -65,7 +67,9 @@ function harness() {
       <span>
         {list.status === "loaded"
           ? list.sessions.map((item) => item.sessionId).join(",")
-          : list.status}
+          : list.status === "error"
+            ? list.error
+            : list.status}
       </span>
     );
   }
@@ -127,4 +131,49 @@ it("uses a supplied listing without a request", async () => {
   await settle();
   expect(container.textContent).toBe("");
   expect(requests).toHaveLength(0);
+});
+
+it.each(["project", "scratchpad"] as const)(
+  "does not request traces for a %s document",
+  async (kind) => {
+    const { container, requests, render } = harness(kind);
+    await render(1);
+    await settle();
+    expect(container.textContent).toBe("");
+    expect(requests).toHaveLength(0);
+  },
+);
+
+it("loads a pinned Review normally", async () => {
+  const { container, requests, render } = harness();
+  await render(1);
+  expect(requests).toHaveLength(1);
+  requests[0]!.resolve(listing("review trace"));
+  await settle();
+  expect(container.textContent).toBe("review trace");
+});
+
+it("shows the API message for a Review HTTP 409 without a Zod error", async () => {
+  const { container, requests, render } = harness();
+  await render(1);
+  requests[0]!.resolve(
+    Response.json(
+      { error: "This document has no source pins of its own." },
+      { status: 409 },
+    ),
+  );
+  await settle();
+  expect(container.textContent).toBe(
+    "This document has no source pins of its own.",
+  );
+});
+
+it("uses a controlled message for HTTP 500", async () => {
+  const { container, requests, render } = harness();
+  await render(1);
+  requests[0]!.resolve(
+    Response.json({ error: "internal secret" }, { status: 500 }),
+  );
+  await settle();
+  expect(container.textContent).toBe("Unable to load agent traces (HTTP 500).");
 });
