@@ -124,6 +124,7 @@ it("shows an empty Project state and renders later Markdown and code peek", asyn
     ),
   );
   expect(container.querySelector('nav[aria-label="Contents"]')).toBeNull();
+  expect(container.textContent).toContain("Edit project");
   expect(
     container.querySelector('button[aria-label="Project"]'),
   ).not.toBeNull();
@@ -149,7 +150,7 @@ it("shows an empty Project state and renders later Markdown and code peek", asyn
       type: "insert",
       content: {
         type: "markdown",
-        markdown: "## Existing notes\n\nRendered prose",
+        markdown: "# Markdown heading\n\n## Existing notes\n\nRendered prose",
       },
     },
   });
@@ -188,6 +189,9 @@ it("shows an empty Project state and renders later Markdown and code peek", asyn
   );
   expect(container.querySelector('nav[aria-label="Contents"]')).toBeNull();
   expect(container.querySelector(".code-peek")).not.toBeNull();
+  expect(
+    [...container.querySelectorAll("h1")].map((heading) => heading.textContent),
+  ).toEqual(["Project notes", "Markdown heading"]);
 });
 
 it("shows the existing Contents navigation for a Project with headings", async () => {
@@ -264,6 +268,26 @@ it("shows the existing Contents navigation for a Project with headings", async (
       );
     else delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo;
   }
+});
+
+it("does not offer Project metadata editing on the legacy Scratchpad", async () => {
+  await store.ensureScratchpad();
+  const app = new Hono().route("/reviews-api", createReviewApi(store));
+  const ready = vi.fn();
+  const container = document.createElement("div");
+  document.body.append(container);
+  await act(async () => {
+    canvas = mount(container, {
+      kind: "api",
+      reviewId: "scratchpad",
+      bridge: testReviewBridge(
+        {},
+        { request: async (url, init) => app.request(url, init), ready },
+      ),
+    });
+  });
+  await act(async () => vi.waitFor(() => expect(ready).toHaveBeenCalled()));
+  expect(container.textContent).not.toContain("Edit project");
 });
 
 it("shows agent migration guidance when an old review cannot be loaded", async () => {
@@ -346,6 +370,7 @@ it("mounts the existing canvas and preserves a section's DOM and collapsed state
   expect(ready).toHaveBeenCalled();
   expect(displayedVersion).toHaveBeenLastCalledWith(inserted.version);
   expect(container.querySelector("h1")?.textContent).toBe("Live review");
+  expect(container.textContent).not.toContain("Edit project");
 
   const node = container.querySelector(
     `[data-review-node-id="${inserted.targetId}"]`,

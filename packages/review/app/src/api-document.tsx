@@ -31,6 +31,7 @@ import { useMotionPhase, useMotionPhases } from "./draw-queue-provider";
 import { drawStyles } from "./draw-styles";
 import { useReviewSession } from "./host/review-session";
 import { documentNodeMarker, proseMarker } from "./markers.stylex";
+import { ProjectMetadataEditor } from "./project-metadata-editor";
 import { reportReviewDocumentRenderError } from "./review-document-error-report";
 import { ReviewDocumentTitle } from "./review-document-surface";
 import { cssIdentifier, scrollToReviewHeading } from "./review-heading-scroll";
@@ -226,8 +227,11 @@ export function ApiDocument({
 
   return (
     <>
-      {!hasTitle && !scratchpad && (
+      {(!hasTitle || data.snapshot.kind === "project") && !scratchpad && (
         <ReviewDocumentTitle>{data.snapshot.title}</ReviewDocumentTitle>
+      )}
+      {data.snapshot.kind === "project" && (
+        <ProjectMetadataEditor snapshot={data.snapshot} />
       )}
       {data.snapshot.kind === "project" &&
         data.snapshot.document.length === 0 && (
