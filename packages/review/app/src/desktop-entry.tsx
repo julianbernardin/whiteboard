@@ -104,6 +104,7 @@ function Home({
     <ReviewHome
       reviews={content.reviews}
       onOpen={(review) => content.openReview(review.reviewId)}
+      onCreateProject={content.createProject}
       onDelete={
         deleteReview ? (review) => deleteReview(review.reviewId) : undefined
       }

@@ -40,6 +40,259 @@ describe("ReviewHome", () => {
     vi.restoreAllMocks();
   });
 
+  it("shows Projects separately with links, dates, order, and no Review actions", async () => {
+    const onOpen = vi.fn<(review: ReviewApiSummary) => void>();
+    const project = (
+      reviewId: string,
+      title: string,
+      createdAt: string,
+      links: string[] = [],
+    ) =>
+      summary({
+        reviewId,
+        kind: "project",
+        title,
+        createdAt,
+        firstCreatedAt: "2026-07-01T10:00:00Z",
+        project: { links },
+        pins: undefined,
+        origin: undefined,
+      });
+    const defaultProject = project(
+      "project",
+      "Project",
+      "2026-07-03T10:00:00Z",
+    );
+    const earlier = project(uuid(1), "Earlier", "2026-07-02T10:00:00Z", [
+      "https://example.com/a",
+    ]);
+    const latest = project(uuid(2), "Latest", "2026-07-04T10:00:00Z", [
+      "https://example.org/a",
+      "https://example.net/b",
+    ]);
+    const review = summary({ reviewId: uuid(3), title: "Review item" });
+    const pad = summary({
+      reviewId: "scratchpad",
+      kind: "scratchpad",
+      title: "Scratchpad",
+      pins: undefined,
+    });
+    await act(async () =>
+      renderWithHost(
+        <ReviewHome
+          reviews={[review, defaultProject, earlier, latest, pad]}
+          onOpen={onOpen}
+          onDelete={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      ),
+    );
+
+    const projects = container.querySelector('section[aria-label="Projects"]')!;
+    expect(
+      [...projects.querySelectorAll("th")].map((cell) => cell.textContent),
+    ).toEqual(["Title", "Links", "Created", "Updated"]);
+    expect(
+      [...projects.querySelectorAll("tbody tr")].map(
+        (row) => row.querySelector("button")?.textContent,
+      ),
+    ).toEqual(["Latest", "Project", "Earlier"]);
+    expect(projects.textContent).toContain("+1");
+    expect(projects.textContent).toContain("—");
+    expect(projects.textContent).not.toContain("PR");
+    expect(projects.querySelector('[aria-label^="Actions"]')).toBeNull();
+    expect(
+      container.querySelector('section[aria-label="Sessions"]')?.textContent,
+    ).toContain("Review item");
+    expect(container.textContent).toContain("Scratchpad");
+    const link = projects.querySelector<HTMLAnchorElement>(
+      'a[href="https://example.org/a"]',
+    )!;
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toBe("noopener noreferrer");
+    expect(link.title).toBe("https://example.org/a");
+    await act(async () => link.click());
+    expect(onOpen).not.toHaveBeenCalled();
+    await act(async () =>
+      projects.querySelector<HTMLButtonElement>("tbody button")!.click(),
+    );
+    expect(onOpen).toHaveBeenCalledWith(latest);
+  });
+
+  it("keeps Projects visible without Reviews, and preserves empty Welcome", async () => {
+    const project = summary({
+      reviewId: "project",
+      kind: "project",
+      title: "Project",
+      project: { links: [] },
+      pins: undefined,
+    });
+    await act(async () =>
+      renderWithHost(<ReviewHome reviews={[project]} onOpen={() => {}} />),
+    );
+    expect(
+      container.querySelector('section[aria-label="Projects"]'),
+    ).not.toBeNull();
+    expect(container.textContent).not.toContain("No reviews match");
+    await act(async () =>
+      renderWithHost(<ReviewHome reviews={[]} onOpen={() => {}} />),
+    );
+    expect(
+      container.querySelector('section[aria-label="Projects"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("Welcome");
+  });
+
+  it("creates a Project once with trimmed title and ordered multiline links", async () => {
+    const pending = Promise.withResolvers<void>();
+    const onCreate = vi.fn(() => pending.promise);
+    const project = summary({
+      reviewId: "project",
+      kind: "project",
+      title: "Project",
+      project: { links: [] },
+      pins: undefined,
+    });
+    await act(async () =>
+      renderWithHost(
+        <ReviewHome
+          reviews={[project]}
+          onOpen={() => {}}
+          onCreateProject={onCreate}
+        />,
+      ),
+    );
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>("button[aria-expanded]")!
+        .click(),
+    );
+    const title =
+      container.querySelector<HTMLInputElement>("#new-project-title")!;
+    const links =
+      container.querySelector<HTMLTextAreaElement>("#new-project-links")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(title, "  Research  ");
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )!.set!.call(links, "https://one.test\n\n https://two.test ");
+      links.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const form = container.querySelector("form")!;
+    await act(async () =>
+      form.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(onCreate).toHaveBeenCalledWith({
+      title: "Research",
+      links: ["https://one.test", "https://two.test"],
+    });
+    await act(async () =>
+      form.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve());
+    expect(container.querySelector("form")).toBeNull();
+    await act(async () =>
+      renderWithHost(<ReviewHome reviews={[project]} onOpen={() => {}} />),
+    );
+    expect(container.textContent).not.toContain("New Project");
+  });
+
+  it("filters Projects by title and retains entered fields after a create error", async () => {
+    const project = summary({
+      reviewId: "project",
+      kind: "project",
+      title: "Architecture",
+      project: { links: [] },
+      pins: undefined,
+    });
+    const other = summary({
+      reviewId: uuid(1),
+      kind: "project",
+      title: "Operations",
+      project: { links: [] },
+      pins: undefined,
+    });
+    const review = summary({ reviewId: uuid(2), title: "Review item" });
+    const onCreate = vi.fn(async () => {
+      throw new Error("Network unavailable");
+    });
+    await act(async () =>
+      renderWithHost(
+        <ReviewHome
+          reviews={[project, other, review]}
+          onOpen={() => {}}
+          onCreateProject={onCreate}
+        />,
+      ),
+    );
+    const search = container.querySelector<HTMLInputElement>(
+      '[aria-label="Search sessions"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(search, "Architecture");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(
+      container.querySelector('section[aria-label="Projects"]')?.textContent,
+    ).toContain("Architecture");
+    expect(
+      container.querySelector('section[aria-label="Projects"]')?.textContent,
+    ).not.toContain("Operations");
+    expect(container.textContent).not.toContain("No reviews match");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(search, "Review item");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(
+      container.querySelector('section[aria-label="Sessions"]')?.textContent,
+    ).toContain("Review item");
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>("button[aria-expanded]")!
+        .click(),
+    );
+    const title =
+      container.querySelector<HTMLInputElement>("#new-project-title")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(title, "Retry me");
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () =>
+      container
+        .querySelector("form")!
+        .dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true }),
+        ),
+    );
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Network unavailable",
+    );
+    expect(
+      container.querySelector<HTMLInputElement>("#new-project-title")?.value,
+    ).toBe("Retry me");
+    expect(onCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("groups chronologically across repositories and shows origins", async () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-22T12:00:00Z"));
 

@@ -21,6 +21,7 @@ export interface IReviewApiCatalogService {
 	readonly onDidChange: Event<void>;
 	readonly onDidCloseReview: Event<string>;
 	initialize(): Promise<void>;
+	createProject(input: { title: string; links: string[] }): Promise<void>;
 	attention(reviewId: string, action: "view" | "dismiss" | "restore"): Promise<void>;
 	deleteReview(reviewId: string): Promise<void>;
 }
@@ -71,6 +72,7 @@ export class ReviewApiCatalogService extends Disposable implements IReviewApiCat
 		this.connectionAbort = abort;
 		const mode = this.configuration.getValue<boolean>(REVIEW_STRUCTURAL_DIFF_SETTING) === false ? "textual" : "structural";
 		const client = new ReviewApiClient(await this.session.getConnection());
+		await client.post("/projects/default/ensure", {});
 		this._register(toDisposable(() => abort.abort()));
 		const accept = (reviews: ReviewApiSummary[]) => {
 			if (abort.signal.aborted) return;
@@ -97,6 +99,13 @@ export class ReviewApiCatalogService extends Disposable implements IReviewApiCat
 		await this.initialize();
 		await this.client!.post("/commands", {
 			operation: { type: "attention", reviewId, action },
+		});
+	}
+
+	async createProject(input: { title: string; links: string[] }): Promise<void> {
+		await this.initialize();
+		await this.client!.post("/commands", {
+			operation: { type: "create", kind: "project", title: input.title, project: { links: input.links } },
 		});
 	}
 

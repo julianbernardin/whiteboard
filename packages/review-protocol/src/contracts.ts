@@ -716,6 +716,7 @@ export type ReviewCanvasContent =
       kind: "home";
       reviews: readonly ReviewApiSummary[];
       openReview(uuid: string): void;
+      createProject?(input: { title: string; links: string[] }): Promise<void>;
       // Deletes the review and closes its canvas. Absent when the host does
       // not support deletion.
       deleteReview?(uuid: string): Promise<void>;

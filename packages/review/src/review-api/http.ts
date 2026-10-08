@@ -300,6 +300,11 @@ export function createReviewApi(
     );
   });
 
+  app.post("/projects/default/ensure", async (context) => {
+    await store.ensureDefaultProject();
+    return context.json({ reviewId: "project" });
+  });
+
   // Server-owned state only: asking the Desktop canvas would let a stalled
   // renderer block tool listing and the first instructions call.
   const instructionContext = async () => ({

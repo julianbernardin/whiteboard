@@ -380,9 +380,11 @@ export class ReviewCanvasEditorPane extends EditorPane {
 				this.renderedInput = input;
 				this.setCanvasState("active", reviewId);
 				this.sessionTelemetry.start(reviewId);
-				void this.apiCatalog
-					.attention(reviewId, "view")
-					.catch((error) => this.logService.warn("[Whiteboard] Could not mark session viewed:", error));
+				if (this.apiCatalog.reviews.find((review) => review.reviewId === reviewId)?.kind !== "project") {
+					void this.apiCatalog
+						.attention(reviewId, "view")
+						.catch((error) => this.logService.warn("[Whiteboard] Could not mark session viewed:", error));
+				}
 				let sourceSelection: ReviewSourceSelection = { reviewId, kind: "current" };
 				let sourceView: ReviewSourceView = resolveReviewSourceView({ reviewId, version: 0, pins: {} });
 				const source = this.apiSource.canvas(() => sourceView, this.inlineEditors, this.diffViews);
@@ -507,6 +509,7 @@ export class ReviewCanvasEditorPane extends EditorPane {
 					{
 						kind: "home",
 						reviews,
+						createProject: (input) => this.apiCatalog.createProject(input),
 						openReview: (uuid) => void openReview(uuid),
 						deleteReview: (uuid) => {
 							this.reviewTelemetryService.capture("review_deleted", { via: "home" });

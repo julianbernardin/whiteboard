@@ -39,6 +39,7 @@ import { WelcomePage } from "./welcome-page";
 interface ReviewHomeProps {
   reviews: readonly ReviewApiSummary[];
   onOpen(review: ReviewApiSummary): void;
+  onCreateProject?(input: { title: string; links: string[] }): Promise<void>;
   // Deletion requires host confirmation.
   // Absent when the host does not support deletion.
   onDelete?(review: ReviewApiSummary): Promise<void>;
@@ -97,6 +98,7 @@ function MatchedText({ text }: { text: string }) {
 export function ReviewHome({
   reviews,
   onOpen,
+  onCreateProject,
   onDelete,
   onDismiss,
   onRestore,
@@ -194,9 +196,23 @@ export function ReviewHome({
   // their chronological order and their lifecycle. The filter still finds it.
   const scratchpad = reviews.find((review) => review.kind === "scratchpad");
 
-  const listed = useMemo(
-    () => reviews.filter((review) => review.kind !== "scratchpad"),
+  const projects = useMemo(
+    () => reviews.filter((review) => review.kind === "project"),
     [reviews],
+  );
+
+  const listed = useMemo(
+    () =>
+      reviews.filter(
+        (review) => review.kind !== "scratchpad" && review.kind !== "project",
+      ),
+    [reviews],
+  );
+
+  const foundProjects = useMemo(
+    () =>
+      projects.filter((project) => fuzzyMatches(needle, reviewTitle(project))),
+    [projects, needle],
   );
 
   const scratchpadShown =
@@ -225,6 +241,7 @@ export function ReviewHome({
   if (
     !onboardingDismissed &&
     listed.length === 0 &&
+    projects.length === 0 &&
     deletions.size === 0 &&
     !deleteError
   ) {
@@ -246,6 +263,9 @@ export function ReviewHome({
           <div {...stylex.props(homeStyles.header)}>
             <h1 {...stylex.props(homeStyles.heading)}>Sessions</h1>
             <div {...stylex.props(styles.headerTools)}>
+              {onCreateProject ? (
+                <NewProject onCreate={onCreateProject} />
+              ) : null}
               <SearchBox query={query} onChange={setQuery} />
             </div>
           </div>
@@ -253,7 +273,10 @@ export function ReviewHome({
           {/* Keyed off the active list, not the whole result: a query that hits
               only dismissed reviews empties the main area, and the collapsed
               Dismissed count alone does not explain why. */}
-          {needle && active.length === 0 && !scratchpadShown ? (
+          {needle &&
+          active.length === 0 &&
+          foundProjects.length === 0 &&
+          !scratchpadShown ? (
             <EmptyState
               message={
                 dismissed.length > 0
@@ -264,6 +287,9 @@ export function ReviewHome({
           ) : null}
           <SearchQueryContext.Provider value={needle}>
             <AttentionActionsContext.Provider value={actions}>
+              {foundProjects.length > 0 ? (
+                <ProjectsTable projects={foundProjects} onOpen={onOpen} />
+              ) : null}
               {scratchpadShown ? (
                 <ScratchpadGroup review={scratchpad} onOpen={onOpen} />
               ) : null}
@@ -284,6 +310,224 @@ export function ReviewHome({
         </div>
       </div>
     </main>
+  );
+}
+
+function NewProject({
+  onCreate,
+}: {
+  onCreate(input: { title: string; links: string[] }): Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [links, setLinks] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const submitting = useRef(false);
+  const titleInput = useRef<HTMLInputElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  return (
+    <div {...stylex.props(styles.projectCreate)}>
+      <button
+        ref={trigger}
+        type="button"
+        {...stylex.props(styles.projectButton)}
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(true);
+          requestAnimationFrame(() => titleInput.current?.focus());
+        }}
+      >
+        New Project
+      </button>
+      {open ? (
+        <form
+          {...stylex.props(styles.projectForm)}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (submitting.current || !title.trim()) return;
+            submitting.current = true;
+            setBusy(true);
+            setError(undefined);
+            void onCreate({
+              title: title.trim(),
+              links: links
+                .split(/\r?\n/)
+                .map((link) => link.trim())
+                .filter(Boolean),
+            })
+              .then(() => {
+                setTitle("");
+                setLinks("");
+                setOpen(false);
+                trigger.current?.focus();
+              })
+              .catch((cause: unknown) => {
+                setError(
+                  cause instanceof Error
+                    ? cause.message
+                    : "Could not create Project.",
+                );
+              })
+              .finally(() => {
+                submitting.current = false;
+                setBusy(false);
+              });
+          }}
+        >
+          <label htmlFor="new-project-title">Title</label>
+          <input
+            id="new-project-title"
+            ref={titleInput}
+            value={title}
+            required
+            disabled={busy}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+          <label htmlFor="new-project-links">
+            Links (one HTTPS URL per line)
+          </label>
+          <textarea
+            id="new-project-links"
+            value={links}
+            disabled={busy}
+            onChange={(event) => setLinks(event.target.value)}
+          />
+          {error ? <p role="alert">{error}</p> : null}
+          <div {...stylex.props(styles.projectFormActions)}>
+            <button type="submit" disabled={busy || !title.trim()}>
+              {busy ? "Creating…" : "Create Project"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setOpen(false);
+                setError(undefined);
+                trigger.current?.focus();
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+function ProjectsTable({
+  projects,
+  onOpen,
+}: {
+  projects: readonly ReviewApiSummary[];
+  onOpen(project: ReviewApiSummary): void;
+}) {
+  const sorted = [...projects].sort(
+    (left, right) =>
+      latestFirst(left, right) || left.reviewId.localeCompare(right.reviewId),
+  );
+
+  return (
+    <section {...stylex.props(styles.tableSection)} aria-label="Projects">
+      <div {...stylex.props(styles.toolbar)}>Projects · {projects.length}</div>
+      <div {...stylex.props(styles.tableScroll)}>
+        <table {...stylex.props(styles.table)}>
+          <thead>
+            <tr>
+              <th scope="col" {...stylex.props(styles.th, styles.firstCell)}>
+                Title
+              </th>
+              <th scope="col" {...stylex.props(styles.th)}>
+                Links
+              </th>
+              <th scope="col" {...stylex.props(styles.th)}>
+                Created
+              </th>
+              <th scope="col" {...stylex.props(styles.th)}>
+                Updated
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((project, index) => {
+              const first = project.project?.links[0];
+              const rest = (project.project?.links.length ?? 0) - 1;
+              const last = index === sorted.length - 1;
+              return (
+                <tr
+                  key={project.reviewId}
+                  {...stylex.props(stylex.defaultMarker(), styles.row)}
+                  onClick={() => onOpen(project)}
+                >
+                  <td
+                    {...stylex.props(
+                      styles.td,
+                      styles.firstCell,
+                      last && styles.lastRowCell,
+                    )}
+                  >
+                    <button
+                      type="button"
+                      {...stylex.props(styles.projectTitle)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpen(project);
+                      }}
+                    >
+                      <MatchedText text={reviewTitle(project)} />
+                    </button>
+                  </td>
+                  <td {...stylex.props(styles.td, last && styles.lastRowCell)}>
+                    {first ? (
+                      <>
+                        <a
+                          {...stylex.props(styles.projectLink)}
+                          href={first}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={first}
+                          aria-label={first}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {new URL(first).hostname}
+                        </a>
+                        {rest > 0 ? ` +${rest}` : null}
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td
+                    {...stylex.props(
+                      styles.td,
+                      styles.dateCell,
+                      last && styles.lastRowCell,
+                    )}
+                    title={project.firstCreatedAt ?? project.createdAt}
+                  >
+                    {formatCreatedTime(
+                      project.firstCreatedAt ?? project.createdAt,
+                    )}
+                  </td>
+                  <td
+                    {...stylex.props(
+                      styles.td,
+                      styles.dateCell,
+                      last && styles.lastRowCell,
+                    )}
+                    title={project.createdAt}
+                  >
+                    {formatRelativeTime(project.createdAt)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -1043,6 +1287,55 @@ const rowMenuStyles = stylex.create({
 const narrow = "@container review-canvas (max-width: 660px)";
 
 const styles = stylex.create({
+  projectCreate: {
+    position: "relative",
+  },
+  projectButton: {
+    padding: "8px 12px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: tokens.rule,
+    borderRadius: radius.control,
+    color: tokens.ink,
+    backgroundColor: tokens.surface,
+    cursor: "pointer",
+  },
+  projectForm: {
+    position: "absolute",
+    zIndex: 10,
+    top: "44px",
+    right: 0,
+    display: "grid",
+    gap: "8px",
+    width: "min(320px, 90vw)",
+    padding: "16px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: tokens.rule,
+    borderRadius: radius.surface,
+    color: tokens.ink,
+    backgroundColor: tokens.surface,
+  },
+  projectFormActions: {
+    display: "flex",
+    gap: "8px",
+  },
+  projectTitle: {
+    padding: 0,
+    borderWidth: 0,
+    borderStyle: "none",
+    color: tokens.ink,
+    backgroundColor: tokens.transparent,
+    cursor: "pointer",
+  },
+  projectLink: {
+    display: "inline-block",
+    maxWidth: "85%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    verticalAlign: "middle",
+  },
   headerTools: {
     display: "flex",
     minWidth: 0,

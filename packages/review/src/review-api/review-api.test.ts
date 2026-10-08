@@ -120,6 +120,79 @@ afterEach(async () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+it("ensures the default Project by POST while catalog GET stays read-only", async () => {
+  const api = createReviewApi(store);
+  expect(await (await api.request("/")).json()).toEqual([]);
+  expect(store.list()).toEqual([]);
+
+  const ensure = () =>
+    api.request("/projects/default/ensure", { method: "POST" });
+  const first = await ensure();
+  expect(first.status).toBe(200);
+  expect(await first.json()).toEqual({ reviewId: PROJECT_ID });
+  expect(store.list().map(({ reviewId }) => reviewId)).toEqual([PROJECT_ID]);
+
+  await store.execute(
+    request({ type: "rename", reviewId: PROJECT_ID, title: "My Project" }),
+  );
+  await store.execute(
+    request({
+      type: "project_update",
+      reviewId: PROJECT_ID,
+      links: ["https://example.com"],
+    }),
+  );
+  await edit(PROJECT_ID, {
+    type: "insert",
+    content: { type: "markdown", markdown: "Saved" },
+  });
+  const before = store.read(PROJECT_ID);
+  const second = await ensure();
+  expect(second.status).toBe(200);
+  expect(store.read(PROJECT_ID)).toEqual(before);
+  expect(
+    (await (await api.request("/")).json()).find(
+      (item: { reviewId: string }) => item.reviewId === PROJECT_ID,
+    ),
+  ).toMatchObject({ title: "My Project", version: before.version });
+});
+
+it("creates Projects through HTTP commands and rejects invalid links without mutation", async () => {
+  const api = createReviewApi(store);
+  const send = (links: string[]) =>
+    api.request("/commands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operation: {
+          type: "create",
+          kind: "project",
+          title: "Research",
+          project: { links },
+        },
+      }),
+    });
+  const valid = await send(["https://example.com/a", "https://example.org/b"]);
+  expect(valid.status).toBe(200);
+  const { reviewId } = await valid.json();
+  expect(reviewId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
+  expect(store.read(reviewId).project?.links).toEqual([
+    "https://example.com/a",
+    "https://example.org/b",
+  ]);
+  expect(
+    (await (await api.request("/")).json()).map(
+      (item: { reviewId: string }) => item.reviewId,
+    ),
+  ).toContain(reviewId);
+
+  const invalid = await send(["http://example.com"]);
+  expect(invalid.status).toBe(400);
+  expect(store.list()).toHaveLength(1);
+});
+
 it("guides missing-review reads and opens to an agent while keeping missing versions distinct", async () => {
   const api = createReviewApi(store);
   const oldId = "11111111-1111-4111-8111-111111111111";
