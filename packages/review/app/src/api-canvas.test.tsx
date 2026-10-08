@@ -123,6 +123,7 @@ it("shows an empty Project state and renders later Markdown and code peek", asyn
       ),
     ),
   );
+  expect(container.querySelector('nav[aria-label="Contents"]')).toBeNull();
   expect(
     container.querySelector('button[aria-label="Project"]'),
   ).not.toBeNull();
@@ -185,7 +186,84 @@ it("shows an empty Project state and renders later Markdown and code peek", asyn
   expect(container.textContent).not.toContain(
     "This Project has no content yet",
   );
+  expect(container.querySelector('nav[aria-label="Contents"]')).toBeNull();
   expect(container.querySelector(".code-peek")).not.toBeNull();
+});
+
+it("shows the existing Contents navigation for a Project with headings", async () => {
+  const project = await command({
+    type: "create",
+    kind: "project",
+    title: "Project outline",
+  });
+  await command({
+    type: "edit",
+    reviewId: project.reviewId,
+    edit: {
+      type: "insert",
+      content: {
+        type: "markdown",
+        markdown: "## Contexto\n\nNotes\n\n## Arquitectura\n\n### Servicios",
+      },
+    },
+  });
+
+  const app = new Hono().route("/reviews-api", createReviewApi(store));
+  const container = document.createElement("div");
+  document.body.append(container);
+  await act(async () => {
+    canvas = mount(container, {
+      kind: "api",
+      reviewId: project.reviewId,
+      bridge: testReviewBridge(
+        {},
+        { request: async (url, init) => app.request(url, init) },
+      ),
+    });
+  });
+
+  await act(async () =>
+    vi.waitFor(() =>
+      expect(
+        container.querySelector('nav[aria-label="Contents"]'),
+      ).not.toBeNull(),
+    ),
+  );
+  const toc = container.querySelector('nav[aria-label="Contents"]')!;
+  const labels = [...toc.querySelectorAll("li button")].map((button) =>
+    button.textContent?.trim(),
+  );
+  expect(labels).toEqual(["1Contexto", "2Arquitectura", "2.1Servicios"]);
+  expect(container.querySelectorAll("h2")).toHaveLength(2);
+  expect(container.querySelectorAll("h3")).toHaveLength(1);
+  const scrollTo = vi.fn();
+  const originalScrollTo = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollTo",
+  );
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+    configurable: true,
+    value: scrollTo,
+  });
+  try {
+    await act(async () =>
+      toc.querySelectorAll<HTMLButtonElement>("li button")[1]!.click(),
+    );
+    expect(scrollTo).toHaveBeenCalledOnce();
+    expect(
+      toc
+        .querySelectorAll<HTMLButtonElement>("li button")[1]
+        ?.getAttribute("aria-current"),
+    ).toBe("location");
+  } finally {
+    if (originalScrollTo)
+      Object.defineProperty(
+        HTMLElement.prototype,
+        "scrollTo",
+        originalScrollTo,
+      );
+    else delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo;
+  }
 });
 
 it("shows agent migration guidance when an old review cannot be loaded", async () => {
