@@ -48,6 +48,7 @@ export function authoringTools(
     ].join("\n"),
     lens_edit:
       "Edit one Diff-view lens. Lenses partition the review's change for the Diff view; they sit beside the document (never in it) and version with it. The host assigns durable lens IDs; updates replace only the fields supplied. Write one lens per call while a reader may be watching; each draws in on the Diffs page. Pass your activityId so your courier draws each lens. The result identifies the lens and reports uncategorized: changed lines no lens selects yet, grouped by file. Keep adding lenses until it is empty or what remains is deliberate. review_lens_get reads the current lenses and gaps.",
+    project_update: "Update a project's links.",
     rename: "Change the review title.",
     restore:
       "Restore title, source pins, PR identity and content from a saved version.",
@@ -118,38 +119,43 @@ export function authoringTools(
       "POST",
       "/:reviewId/activity/end",
     ),
-    ...commandSchema.shape.operation.options.map((operation) => {
-      const type = operation.shape.type.value;
+    ...commandSchema.shape.operation.options
+      .filter((operation) => operation.shape.type.value !== "project_update")
+      .map((operation) => {
+        const type = operation.shape.type.value;
 
-      // Agents name a checkout by its path; /commands registers it.
-      const {
-        type: _type,
-        repositoryId: _repositoryId,
-        ...fields
-      }: Record<string, z.ZodType> = operation.shape;
+        // Agents name a checkout by its path; /commands registers it.
+        const {
+          type: _type,
+          repositoryId: _repositoryId,
+          project: _project,
+          kind: _kind,
+          ...fields
+        }: Record<string, z.ZodType> = operation.shape;
 
-      return tool(
-        type,
-        descriptions[type],
-        z.strictObject({
-          ...fields,
-          ...(type === "create" && {
-            target: pathTargetSchema.optional(),
-            repositoryPath: id
-              .optional()
-              .describe(
-                "Only with pullRequestUrl and no target: the local checkout to fetch the PR into. Default: the existing review's, else the first registered checkout with a remote for the PR's repository.",
-              ),
-            open: z.boolean().optional(),
+        return tool(
+          type,
+          descriptions[type],
+          z.strictObject({
+            ...fields,
+            ...(type === "create" && {
+              kind: z.literal("scratchpad").optional(),
+              target: pathTargetSchema.optional(),
+              repositoryPath: id
+                .optional()
+                .describe(
+                  "Only with pullRequestUrl and no target: the local checkout to fetch the PR into. Default: the existing review's, else the first registered checkout with a remote for the PR's repository.",
+                ),
+              open: z.boolean().optional(),
+            }),
+            ...(type === "set_target" && { target: pathTargetSchema }),
+            ...(type === "edit" && { edit: publishedEditSchema }),
           }),
-          ...(type === "set_target" && { target: pathTargetSchema }),
-          ...(type === "edit" && { edit: publishedEditSchema }),
-        }),
-        "POST",
-        "/commands",
-        type,
-      );
-    }),
+          "POST",
+          "/commands",
+          type,
+        );
+      }),
     tool("list", "List saved reviews.", z.strictObject({}), "GET", ""),
     tool(
       "get",

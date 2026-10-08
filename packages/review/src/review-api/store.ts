@@ -5,6 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { resolveRepoContextSync } from "@dev.fast/local-vcs";
 import {
   type ReviewApiSummary,
+  type ProjectMetadata,
+  PROJECT_REVIEW_ID,
   SCRATCHPAD_REVIEW_ID,
 } from "@dev.fast/review-protocol";
 import { sourceAnchors } from "@review/lens-selection.js";
@@ -60,6 +62,14 @@ const reviewId = z.string().min(1);
 
 /** There is one scratchpad. Its id is fixed so a skill can name it. */
 export const SCRATCHPAD_ID = SCRATCHPAD_REVIEW_ID;
+export const PROJECT_ID = PROJECT_REVIEW_ID;
+export const PROJECT_TITLE = "Project";
+
+const projectMetadataSchema = z.strictObject({
+  links: z.array(
+    z.url().refine((value) => new URL(value).protocol === "https:"),
+  ),
+});
 
 const DIAGRAM_TYPES = new Set([
   "sequence",
@@ -109,7 +119,8 @@ export const commandSchema = z.strictObject({
           "Default true: return the existing review for pullRequestUrl. false creates a separate review.",
         ),
       /** The one scratchpad: no target, no pins; every reference names its own. */
-      kind: z.literal("scratchpad").optional(),
+      kind: z.enum(["scratchpad", "project"]).optional(),
+      project: projectMetadataSchema.optional(),
     }),
     z.strictObject({
       type: z.literal("set_target"),
@@ -133,6 +144,11 @@ export const commandSchema = z.strictObject({
       type: z.literal("rename"),
       reviewId,
       title: z.string().trim().min(1),
+    }),
+    z.strictObject({
+      type: z.literal("project_update"),
+      reviewId,
+      links: projectMetadataSchema.shape.links,
     }),
     z.strictObject({
       type: z.literal("restore"),
@@ -160,7 +176,8 @@ export interface Snapshot {
   version: number;
   title: string;
   /** Absent for a review. The scratchpad has no pins, target or lifecycle. */
-  kind?: "scratchpad";
+  kind?: "scratchpad" | "project";
+  project?: ProjectMetadata;
   /** The default pins for references that name none. A document whose
    * references all carry their own pins has neither pins nor target. */
   pins?: Pins;
@@ -883,6 +900,21 @@ export class ReviewStore {
       if (!this.has(SCRATCHPAD_ID)) throw error;
     }
   }
+  async ensureDefaultProject(): Promise<void> {
+    if (this.has(PROJECT_ID)) return;
+
+    try {
+      await this.executeCommand(
+        {
+          operation: { type: "create", title: PROJECT_TITLE, kind: "project" },
+        },
+        undefined,
+        PROJECT_ID,
+      );
+    } catch (error) {
+      if (!this.has(PROJECT_ID)) throw error;
+    }
+  }
   history(id: string) {
     return this.db
       .prepare(
@@ -905,6 +937,13 @@ export class ReviewStore {
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Command boundary: commandSchema.parse below rejects malformed input before mutation.
     input: unknown,
     initial?: { document: Block[]; origin: SnapshotOrigin },
+  ): Promise<Result> {
+    return this.executeCommand(input, initial);
+  }
+  private executeCommand(
+    input: unknown,
+    initial?: { document: Block[]; origin: SnapshotOrigin },
+    createId?: typeof PROJECT_ID,
   ): Promise<Result> {
     if (this.closing)
       return Promise.reject(new Error("Review store is closing."));
@@ -933,13 +972,47 @@ export class ReviewStore {
           409,
         );
 
+      if (
+        op.type !== "create" &&
+        op.type !== "edit" &&
+        op.type !== "rename" &&
+        op.type !== "project_update" &&
+        op.type !== "restore" &&
+        this.read(op.reviewId).kind === "project"
+      )
+        throw new ReviewInputError(
+          "A project has no review lifecycle or pins.",
+          409,
+        );
+
+      if (
+        op.type === "project_update" &&
+        this.read(op.reviewId).kind !== "project"
+      )
+        throw new ReviewInputError("Only projects have project metadata.", 409);
+
       if (op.type === "create" && op.kind === "scratchpad") {
+        if (op.project)
+          throw new ReviewInputError("A scratchpad has no project metadata.");
         if (op.target)
           throw new ReviewInputError("A scratchpad has no target of its own.");
 
         if (this.has(SCRATCHPAD_ID))
           throw new ReviewInputError("The scratchpad already exists.", 409);
+      } else if (op.type === "create" && op.kind === "project") {
+        if (!op.title) throw new ReviewInputError("Supply a title.");
+        if (
+          op.target ||
+          op.pullRequestUrl ||
+          op.repositoryId ||
+          op.reuseExisting !== undefined
+        )
+          throw new ReviewInputError(
+            "A project has no target or pull request.",
+          );
       } else if (op.type === "create") {
+        if (op.project)
+          throw new ReviewInputError("A review has no project metadata.");
         if (!op.target && !op.pullRequestUrl)
           throw new ReviewInputError("Supply a target or a pullRequestUrl.");
 
@@ -1054,7 +1127,7 @@ export class ReviewStore {
           ? op.reviewId
           : op.kind === "scratchpad"
             ? SCRATCHPAD_ID
-            : randomUUID();
+            : (createId ?? randomUUID());
 
       const previous = op.type === "create" ? undefined : this.read(id);
 
@@ -1113,6 +1186,9 @@ export class ReviewStore {
           break;
         case "rename":
           snapshot.title = op.title;
+          break;
+        case "project_update":
+          snapshot.project = { links: op.links };
           break;
         case "set_target":
           setPullRequest(
@@ -1586,7 +1662,11 @@ function namedCommits(target: ReviewTarget) {
  * is kept so stored JSON reads as it always has. */
 function createdSnapshot(
   id: string,
-  op: { title?: string; kind?: "scratchpad" },
+  op: {
+    title?: string;
+    kind?: "scratchpad" | "project";
+    project?: ProjectMetadata;
+  },
   resolved: { target: ReviewTarget; pins: Pins } | undefined,
   defaultTitle?: string,
 ): Snapshot {
@@ -1600,6 +1680,7 @@ function createdSnapshot(
       version: 0,
       title,
       kind: op.kind,
+      ...(op.kind === "project" && { project: op.project ?? { links: [] } }),
       document: [],
       createdAt: "",
     };

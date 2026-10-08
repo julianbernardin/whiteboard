@@ -1,12 +1,15 @@
 import type { JsonValue } from "@dev.fast/json";
 
+import type { ProjectMetadata } from "./contracts.js";
+
 /** List metadata for the authenticated local catalog; document contents stay in snapshots. */
 export interface ReviewApiSummary {
   reviewId: string;
   version: number;
   title: string;
   /** Absent for a review. The one scratchpad has no pins or lifecycle. */
-  kind?: "scratchpad";
+  kind?: "scratchpad" | "project";
+  project?: ProjectMetadata;
   /** What is on the scratchpad, for its Home card; absent for a review. */
   contents?: { blocks: number; diagrams: number };
   /** Absent for a document whose references all carry their own pins. */

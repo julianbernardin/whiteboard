@@ -24,6 +24,8 @@ import { LocalReviewData } from "./local-data";
 import {
   type ReviewProviders,
   ReviewStore,
+  PROJECT_ID,
+  PROJECT_TITLE,
   SCRATCHPAD_ID,
   inspectSnapshot,
 } from "./store.js";
@@ -63,11 +65,39 @@ const create = () =>
     }),
   );
 
+const createProject = (title = "Notes", links?: string[]) =>
+  store.execute(
+    request({
+      type: "create",
+      kind: "project",
+      title,
+      ...(links && { project: { links } }),
+    }),
+  );
+
 const edit = <Content>(reviewId: string, value: Content) =>
   store.execute(request({ type: "edit", reviewId, edit: value }));
 
 const writeLens = <Edit>(reviewId: string, value: Edit) =>
   store.execute(request({ type: "lens_edit", reviewId, edit: value }));
+
+it("keeps Project commands out of the published authoring catalog", () => {
+  const tools = authoringTools();
+  const names = tools.map((tool) => tool.name);
+  expect(names).toContain("review_create");
+  expect(names).toContain("review_edit");
+  expect(names).toContain("review_open");
+  expect(names).not.toContain("review_project_update");
+  const createSchema = tools.find(
+    (tool) => tool.name === "review_create",
+  )!.inputSchema;
+  expect(createSchema.properties).not.toHaveProperty("project");
+  const kind = Object.entries(createSchema.properties ?? {}).find(
+    ([name]) => name === "kind",
+  )?.[1];
+  expect(kind).toMatchObject({ const: "scratchpad" });
+  expect(JSON.stringify(kind)).not.toContain("project");
+});
 
 beforeEach(() => {
   directory = mkdtempSync(path.join(tmpdir(), "review-lean-"));
@@ -113,6 +143,181 @@ it("guides missing-review reads and opens to an agent while keeping missing vers
 });
 
 describe("snapshot authoring", () => {
+  it("ensures one default Project without resetting its versions or metadata", async () => {
+    await store.ensureDefaultProject();
+    expect(store.read(PROJECT_ID)).toMatchObject({
+      reviewId: PROJECT_ID,
+      kind: "project",
+      title: PROJECT_TITLE,
+      project: { links: [] },
+      document: [],
+    });
+    expect(store.read(PROJECT_ID).pins).toBeUndefined();
+    expect(store.read(PROJECT_ID).target).toBeUndefined();
+    await store.execute(
+      request({ type: "rename", reviewId: PROJECT_ID, title: "My Project" }),
+    );
+    await store.ensureDefaultProject();
+    expect(
+      store.list().filter((item) => item.reviewId === PROJECT_ID),
+    ).toHaveLength(1);
+    expect(store.read(PROJECT_ID)).toMatchObject({
+      title: "My Project",
+      version: 1,
+    });
+  });
+
+  it("creates distinct UUID Projects with HTTPS links and guards their creation", async () => {
+    const first = await createProject("First");
+    const second = await createProject("Second", [
+      "https://example.com",
+      "https://example.com/path?a=1",
+    ]);
+    expect(first.reviewId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(second.reviewId).not.toBe(first.reviewId);
+    expect(store.read(first.reviewId)).toMatchObject({
+      kind: "project",
+      title: "First",
+      project: { links: [] },
+    });
+    expect(store.read(second.reviewId).project?.links).toEqual([
+      "https://example.com",
+      "https://example.com/path?a=1",
+    ]);
+    expect(
+      store.list().find((item) => item.reviewId === second.reviewId)?.project
+        ?.links,
+    ).toEqual(store.summary(second.reviewId)?.project?.links);
+    for (const field of [
+      { target: { kind: "commits", ...pins } },
+      { pullRequestUrl: "https://github.com/devdotfast/review/pull/452" },
+      { repositoryId: "repo" },
+      { reuseExisting: false },
+      { project: { links: ["http://example.com"] } },
+      { project: { links: ["ftp://example.com"] } },
+      { project: { links: ["/relative"] } },
+    ])
+      await expect(
+        Promise.resolve().then(() =>
+          store.execute(
+            request({
+              type: "create",
+              kind: "project",
+              title: "Invalid",
+              ...field,
+            }),
+          ),
+        ),
+      ).rejects.toThrow();
+    await expect(
+      store.execute(request({ type: "create", kind: "project" })),
+    ).rejects.toThrow();
+  });
+
+  it("versions Project edits, links and title; restore recovers all three", async () => {
+    const { reviewId } = await createProject("Original", [
+      "https://example.com",
+    ]);
+    await edit(reviewId, {
+      type: "insert",
+      content: { type: "markdown", markdown: "first" },
+    });
+    await edit(reviewId, {
+      type: "insert",
+      content: { type: "markdown", markdown: "second" },
+    });
+    const original = store.read(reviewId, 2);
+    expect(
+      original.document.map((block) => "markdown" in block && block.markdown),
+    ).toEqual(["first", "second"]);
+    await store.execute(
+      request({ type: "rename", reviewId, title: "Renamed" }),
+    );
+    await store.execute(
+      request({
+        type: "project_update",
+        reviewId,
+        links: ["https://new.example/path"],
+      }),
+    );
+    expect(store.read(reviewId)).toMatchObject({
+      version: 4,
+      title: "Renamed",
+      project: { links: ["https://new.example/path"] },
+      document: original.document,
+    });
+    expect(
+      store.history(reviewId).map(({ version, title }) => ({ version, title })),
+    ).toEqual([
+      { version: 0, title: "Original" },
+      { version: 1, title: "Original" },
+      { version: 2, title: "Original" },
+      { version: 3, title: "Renamed" },
+      { version: 4, title: "Renamed" },
+    ]);
+    expect(() =>
+      store.execute(
+        request({
+          type: "project_update",
+          reviewId,
+          links: ["http://example.com"],
+        }),
+      ),
+    ).toThrow();
+    await store.execute(request({ type: "restore", reviewId, version: 2 }));
+    expect(store.read(reviewId)).toMatchObject({
+      version: 5,
+      reviewId,
+      kind: "project",
+      title: "Original",
+      project: { links: ["https://example.com"] },
+      document: original.document,
+    });
+  });
+
+  it("requires explicit source pins and rejects Review lifecycle on Projects", async () => {
+    const { reviewId } = await createProject();
+    await expect(
+      edit(reviewId, {
+        type: "insert",
+        content: { type: "code_peek", source: rangeAnchor(source) },
+      }),
+    ).rejects.toThrow(/document has no pins/);
+    await edit(reviewId, {
+      type: "insert",
+      content: {
+        type: "code_peek",
+        source: rangeAnchor(source),
+        pins: { repositoryId: "repo", head: "a".repeat(40) },
+      },
+    });
+    expect(store.read(reviewId).pins).toBeUndefined();
+    expect(store.read(reviewId).target).toBeUndefined();
+    for (const operation of [
+      { type: "set_target", reviewId, target: { kind: "commits", ...pins } },
+      {
+        type: "lens_edit",
+        reviewId,
+        edit: { type: "remove", targetId: "lens-1" },
+      },
+      { type: "attention", reviewId, action: "view" },
+      { type: "delete", reviewId },
+    ])
+      await expect(store.execute(request(operation))).rejects.toMatchObject({
+        status: 409,
+      });
+    await expect(
+      store.execute(
+        request({
+          type: "project_update",
+          reviewId: (await create()).reviewId,
+          links: [],
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+  });
   it("binds PR identity without erasing content, versions changes, and clears stale identity across repositories", async () => {
     const url = "https://github.com/devdotfast/review/pull/310";
 

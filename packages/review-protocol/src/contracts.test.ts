@@ -174,6 +174,20 @@ const contracts: Array<[string, ZodType, JsonObject]> = [
 ];
 
 describe("Review protocol Zod contracts", () => {
+  it("accepts project and existing review IDs for opening", () => {
+    for (const reviewUuid of [
+      "project",
+      "scratchpad",
+      "11111111-1111-4111-8111-111111111111",
+      `shared-${"a".repeat(64)}`,
+    ])
+      expect(
+        ReviewVerbRequestSchema.safeParse({
+          name: "openReview",
+          args: { reviewUuid, active: true },
+        }).success,
+      ).toBe(true);
+  });
   it.each(contracts)("accepts a valid %s", (_name, schema, value) => {
     expect(schema.safeParse(value).success).toBe(true);
   });
