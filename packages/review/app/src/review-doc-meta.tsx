@@ -17,6 +17,7 @@ import { DiffCount } from "./diff-count";
 import { DisplayedReviewVersionContext } from "./displayed-review-version-context";
 import { drawStyles } from "./draw-styles";
 import { useReviewSession } from "./host/review-session";
+import { documentMarker } from "./markers.stylex";
 import { ReviewBranchRange, WORKING_TREE } from "./review-branch-range";
 import { useReviewDiffFiles } from "./review-diff-files-context";
 import { tokens } from "./tokens.stylex";
@@ -258,10 +259,14 @@ function relativeTimeLabel(timeMs: number, nowMs: number): string | null {
 }
 
 // Paper's review header: identity, title, then source and diff metadata.
+const inProjectDocument = () =>
+  stylex.when.ancestor(':is([data-kind="project"])', documentMarker);
+
 const styles = stylex.create({
   header: {
     width: `min(100%, ${tokens.reviewProseMaxWidth})`,
     margin: "28px auto 0",
+    marginInline: { default: null, [inProjectDocument()]: 0 },
     display: "flex",
     flexDirection: "column",
     gap: "12px",

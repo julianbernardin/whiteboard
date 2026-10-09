@@ -1,3 +1,4 @@
+import * as stylex from "@stylexjs/stylex";
 import { act } from "react";
 import { type Root, createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -5,9 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TestCanvasQuery } from "./canvas-query-test-utils";
 import { DisplayedReviewVersionContext } from "./displayed-review-version-context";
+import { documentStyles } from "./document-styles";
 import { ReviewSessionProvider } from "./host/review-session";
+import { appMarker, documentMarker } from "./markers.stylex";
 import { ReviewDocumentMetaLine } from "./review-doc-meta";
+import { ReviewDocumentTitle } from "./review-document-surface";
 import { testReviewSession } from "./review-session-test-utils";
+
+import "./styles.css";
 
 let root: Root | null = null;
 
@@ -162,5 +168,98 @@ describe("ReviewDocumentMetaLine", () => {
     };
     await render(2);
     await vi.waitFor(() => expect(container.querySelector("a")).toBeNull());
+  });
+
+  it.each(["standard", "wide", "full"] as const)(
+    "aligns the real Project header with the article interior in %s mode",
+    async (mode) => {
+      const session = testReviewSession();
+      const container = document.createElement("div");
+      document.body.append(container);
+      root = createRoot(container);
+
+      await act(async () => {
+        root?.render(
+          <TestCanvasQuery>
+            <main
+              {...stylex.props(appMarker)}
+              data-document-header
+              data-document-width={mode}
+              style={{
+                width: "1660px",
+                container: "review-content / inline-size",
+              }}
+            >
+              <ReviewSessionProvider session={session}>
+                <article
+                  {...stylex.props(
+                    documentStyles.article,
+                    documentStyles.projectArticle,
+                    documentMarker,
+                  )}
+                  data-kind="project"
+                >
+                  <ReviewDocumentTitle>Project title</ReviewDocumentTitle>
+                </article>
+              </ReviewSessionProvider>
+            </main>
+          </TestCanvasQuery>,
+        );
+      });
+
+      const article = container.querySelector<HTMLElement>("article")!;
+      const header = container.querySelector<HTMLElement>(
+        "[data-review-document-header]",
+      )!;
+      const articleInteriorLeft =
+        article.getBoundingClientRect().left +
+        parseFloat(getComputedStyle(article).paddingLeft);
+      expect(
+        Math.abs(header.getBoundingClientRect().left - articleInteriorLeft),
+      ).toBeLessThanOrEqual(2);
+    },
+  );
+
+  it("keeps the Review header centered within a wide article", async () => {
+    const session = testReviewSession();
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        <TestCanvasQuery>
+          <main
+            {...stylex.props(appMarker)}
+            data-document-header
+            data-document-width="wide"
+            style={{
+              width: "1660px",
+              container: "review-content / inline-size",
+            }}
+          >
+            <ReviewSessionProvider session={session}>
+              <article
+                {...stylex.props(documentStyles.article, documentMarker)}
+                data-kind="review"
+              >
+                <ReviewDocumentTitle>Review title</ReviewDocumentTitle>
+              </article>
+            </ReviewSessionProvider>
+          </main>
+        </TestCanvasQuery>,
+      );
+    });
+
+    const article = container.querySelector<HTMLElement>("article")!;
+    const header = container.querySelector<HTMLElement>(
+      "[data-review-document-header]",
+    )!;
+    const articleInteriorLeft =
+      article.getBoundingClientRect().left +
+      parseFloat(getComputedStyle(article).paddingLeft);
+    expect(
+      header.getBoundingClientRect().left - articleInteriorLeft,
+    ).toBeGreaterThan(20);
   });
 });
