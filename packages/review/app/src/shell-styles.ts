@@ -70,6 +70,18 @@ export const shellStyles = stylex.create({
   documentShellBanner: {
     gridTemplateRows: "auto auto minmax(0, 1fr)",
   },
+  projectShellExpanded: {
+    gridTemplateColumns: "260px minmax(0, 1fr)",
+  },
+  projectShellCollapsed: {
+    gridTemplateColumns: "40px minmax(0, 1fr)",
+  },
+  projectGridSpan: {
+    gridColumn: "1 / -1",
+  },
+  projectDockedRegion: {
+    gridColumn: 2,
+  },
   // The host's own box lives in the collapsed third grid column on narrow
   // layouts; dissolving it lets the sheet position against the app instead
   // of a 0-width, overflow-hidden ancestor.
@@ -312,6 +324,11 @@ export const shellStyles = stylex.create({
       },
       [narrowViewport]: "22px 8px calc(96px + var(--review-toc-tail, 0px))",
     },
+  },
+  projectReviewRegion: {
+    justifyContent: "flex-start",
+    paddingLeft: "32px",
+    paddingRight: "32px",
   },
   documentView: {
     display: "contents",

@@ -53,6 +53,10 @@ export function ReviewToc({
   entries,
   besideHeader = false,
   documentWidth = "standard",
+  project = false,
+  projectDocked = false,
+  projectExpanded = true,
+  onProjectExpandedChange,
 }: {
   entries: readonly ReviewTocEntry[];
   /** The document opens with a review header: the rail lines up with the
@@ -61,6 +65,10 @@ export function ReviewToc({
    * each keystroke in a text field. */
   besideHeader?: boolean;
   documentWidth?: ReviewDocumentWidthChoice;
+  project?: boolean;
+  projectDocked?: boolean;
+  projectExpanded?: boolean;
+  onProjectExpandedChange?: (expanded: boolean) => void;
 }): ReactElement | null {
   const roots = useReviewRoots();
   const shellRef = roots?.shellRef;
@@ -77,7 +85,7 @@ export function ReviewToc({
   useEffect(() => {
     const shell = shellRef?.current;
 
-    if (!shell) return;
+    if (!shell || project) return;
 
     const updateWidth = () => {
       setIsWide(shell.clientWidth >= TOC_RAIL_MIN_SHELL_WIDTH[documentWidth]);
@@ -88,7 +96,7 @@ export function ReviewToc({
     resizeObserver.observe(shell);
 
     return () => resizeObserver.disconnect();
-  }, [shellRef, documentWidth]);
+  }, [shellRef, documentWidth, project]);
 
   useEffect(() => {
     if (isWide) setIsDrawerOpen(false);
@@ -278,7 +286,7 @@ export function ReviewToc({
 
   const numberedEntries = numberReviewTocEntries(entries);
 
-  const showRail = isWide;
+  const showRail = projectDocked ? projectExpanded : !project && isWide;
   const showList = showRail || isDrawerOpen;
 
   // On a narrow shell the nav is the pill: a 32px square holding only the
@@ -289,7 +297,7 @@ export function ReviewToc({
   // nav, so a resize or zoom change swaps rail and pill without animating.
   return (
     <nav
-      key={showRail ? "rail" : "pill"}
+      key={projectDocked ? "project" : showRail ? "rail" : "pill"}
       id="review-toc"
       {...stylex.props(
         surfaceStyles.popover,
@@ -301,28 +309,56 @@ export function ReviewToc({
           besideHeader &&
           documentWidth === "wide" &&
           styles.tocRailBesideWideHeader,
+        projectDocked && styles.projectToc,
+        projectDocked && projectExpanded && styles.projectTocExpanded,
       )}
       aria-label="Contents"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
-          setIsDrawerOpen(false);
+          if (projectDocked && projectExpanded) {
+            onProjectExpandedChange?.(false);
+            event.currentTarget
+              .querySelector<HTMLButtonElement>(
+                '[aria-controls="review-toc-body"]',
+              )
+              ?.focus();
+          } else {
+            setIsDrawerOpen(false);
+          }
         }
       }}
     >
       <IconButton
         size="large"
-        xstyle={[styles.toggle, showList && styles.toggleOpen]}
-        aria-label={isDrawerOpen ? "Close contents" : "Open contents"}
-        aria-expanded={isDrawerOpen}
+        xstyle={[
+          styles.toggle,
+          showList && styles.toggleOpen,
+          projectDocked && styles.projectToggle,
+        ]}
+        aria-label={
+          projectDocked
+            ? projectExpanded
+              ? "Hide contents"
+              : "Show contents"
+            : isDrawerOpen
+              ? "Close contents"
+              : "Open contents"
+        }
+        aria-expanded={projectDocked ? projectExpanded : isDrawerOpen}
         aria-controls="review-toc-body"
-        hidden={showRail || undefined}
-        onClick={() => setIsDrawerOpen((open) => !open)}
+        hidden={(!projectDocked && showRail) || undefined}
+        onClick={() =>
+          projectDocked
+            ? onProjectExpandedChange?.(!projectExpanded)
+            : setIsDrawerOpen((open) => !open)
+        }
       >
         <ContentsIcon xstyle={styles.toggleIcon} />
       </IconButton>
       <div
         id="review-toc-body"
+        inert={!showList || undefined}
         {...stylex.props(
           styles.body,
           showList && styles.bodyOpen,
@@ -482,6 +518,32 @@ const styles = stylex.create({
   // Beside a wide document the page is its block column plus the same gutters.
   tocRailBesideWideHeader: {
     left: "max(24px, calc((100% - 1792px) / 2))",
+  },
+  projectToc: {
+    position: "relative",
+    top: 0,
+    left: 0,
+    zIndex: tocLayer.rail,
+    alignSelf: "start",
+    width: "40px",
+    height: "40px",
+    marginTop: tokens.reviewPageTop,
+    overflow: "hidden",
+    transition: "none",
+    borderColor: tokens.transparent,
+    backgroundColor: tokens.transparent,
+    boxShadow: "none",
+  },
+  projectTocExpanded: {
+    width: "260px",
+    height: "auto",
+    padding: "20px 18px 22px 20px",
+    overflow: "visible",
+  },
+  projectToggle: {
+    top: "4px",
+    left: "auto",
+    right: "4px",
   },
   toggle: {
     position: "absolute",

@@ -448,6 +448,23 @@ function ReviewLayoutContent({
   const tutorial = useTutorial() !== null;
 
   const tocEntries = document.tocEntries ?? [];
+  const [projectShellWidth, setProjectShellWidth] = useState(0);
+  const [projectContentsExpanded, setProjectContentsExpanded] = useState(true);
+  useLayoutEffect(() => {
+    if (!project || tocEntries.length < 2) return;
+    const shell = shellRef.current;
+    if (!shell) return;
+    const measure = () => setProjectShellWidth(shell.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, [project, shellRef, tocEntries.length]);
+  const projectDocked =
+    project &&
+    activeView === "review" &&
+    tocEntries.length >= 2 &&
+    projectShellWidth >= 1050;
 
   // Subscribe before the canvas signals ready so a reveal immediately after
   // mounting cannot outrun the listener.
@@ -517,13 +534,22 @@ function ReviewLayoutContent({
           "review-document-shell",
           shellStyles.documentShell,
           !!banner && shellStyles.documentShellBanner,
+          projectDocked &&
+            (projectContentsExpanded
+              ? shellStyles.projectShellExpanded
+              : shellStyles.projectShellCollapsed),
         )}
       >
         <TutorialExperienceProvider
           shellRef={shellRef}
           scrollRegionRef={scrollRegionRef}
         >
-          <header {...stylex.props(shellStyles.topbar)}>
+          <header
+            {...stylex.props(
+              shellStyles.topbar,
+              projectDocked && shellStyles.projectGridSpan,
+            )}
+          >
             <div {...stylex.props(shellStyles.topbarLeft, topbarTabsMarker)}>
               <div
                 {...stylex.props(
@@ -693,12 +719,20 @@ function ReviewLayoutContent({
               ) : null}
             </div>
           </header>
-          {banner}
+          {projectDocked && banner ? (
+            <div {...stylex.props(shellStyles.projectGridSpan)}>{banner}</div>
+          ) : (
+            banner
+          )}
           {activeView === "review" && (
             <ReviewToc
               entries={tocEntries}
               besideHeader={document.header}
               documentWidth={document.width}
+              project={project}
+              projectDocked={projectDocked}
+              projectExpanded={projectContentsExpanded}
+              onProjectExpandedChange={setProjectContentsExpanded}
             />
           )}
           <section
@@ -708,6 +742,10 @@ function ReviewLayoutContent({
               shellStyles.viewRegion,
               activeView === "commits" && shellStyles.commitsRegion,
               activeView === "review" && shellStyles.reviewRegion,
+              project &&
+                activeView === "review" &&
+                shellStyles.projectReviewRegion,
+              projectDocked && shellStyles.projectDockedRegion,
               activeView === "trace" && traceStyles.region,
             )}
           >
@@ -727,6 +765,7 @@ function ReviewLayoutContent({
                     documentStyles.article,
                     documentMarker,
                     rightPanelOpen && documentStyles.articlePeekOpen,
+                    project && documentStyles.projectArticle,
                   )}
                   data-kind={freeform ? session.review?.kind : undefined}
                 >

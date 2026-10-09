@@ -11,6 +11,8 @@ import { tokens } from "./tokens.stylex";
 // `data-review-node-id` and a Markdown or trace quote block proseMarker.
 
 const inDocument = () => stylex.when.ancestor(":is(*)", documentMarker);
+const inProjectDocument = () =>
+  stylex.when.ancestor(':is([data-kind="project"])', documentMarker);
 
 // A block's own element: it sits in the prose column.
 const inDocumentBlock = () => `${inDocument()}:is([data-review-node-id] > *)`;
@@ -117,6 +119,9 @@ export const documentStyles = stylex.create({
     fontSize: documentType.body,
     lineHeight: 1.6,
   },
+  projectArticle: {
+    margin: "0 0 96px",
+  },
   // Beside an open side peek the column narrows its inline diagrams, and a
   // database lens keeps a smaller gutter.
   articlePeekOpen: {
@@ -143,6 +148,7 @@ export const documentStyles = stylex.create({
   h1: {
     width: { default: null, [inDocument()]: proseColumn },
     margin: { default: null, [inDocument()]: "28px auto 18px" },
+    marginInline: { default: null, [inProjectDocument()]: 0 },
     marginTop: { default: null, [scratchpadOpening()]: 0 },
     color: { default: null, [inDocument()]: tokens.ink },
     fontFamily: { default: null, [inDocument()]: tokens.fontSerif },
@@ -160,6 +166,7 @@ export const documentStyles = stylex.create({
     width: { default: null, [inDocumentBlock()]: proseColumn },
     maxWidth: { default: null, [inDocumentBlock()]: proseMaxWidth },
     margin: { default: null, [inDocument()]: "40px auto 12px" },
+    marginInline: { default: null, [inProjectDocument()]: 0 },
     marginTop: { default: null, [scratchpadOpening()]: 0 },
     color: { default: null, [inDocument()]: tokens.ink },
     fontFamily: { default: null, [inDocument()]: tokens.fontSerif },
@@ -172,6 +179,7 @@ export const documentStyles = stylex.create({
     width: { default: null, [inDocumentBlock()]: proseColumn },
     maxWidth: { default: null, [inDocumentBlock()]: proseMaxWidth },
     margin: { default: null, [inDocument()]: "30px auto 10px" },
+    marginInline: { default: null, [inProjectDocument()]: 0 },
     marginTop: { default: null, [scratchpadOpening()]: 0 },
     color: { default: null, [inDocument()]: tokens.ink },
     fontFamily: { default: null, [inDocument()]: tokens.fontSerif },
@@ -184,6 +192,7 @@ export const documentStyles = stylex.create({
     width: { default: null, [inDocumentBlock()]: proseColumn },
     maxWidth: { default: null, [inDocumentBlock()]: proseMaxWidth },
     marginInline: { default: null, [inDocumentBlock()]: "auto" },
+    marginLeft: { default: null, [inProjectDocument()]: 0 },
   },
   serif: {
     fontFamily: { default: null, [inDocument()]: tokens.fontSerif },
@@ -193,6 +202,7 @@ export const documentStyles = stylex.create({
     maxWidth: { default: null, [inDocumentBlock()]: proseMaxWidth },
     margin: { default: null, [inProse()]: "14px 0" },
     marginInline: { default: null, [inDocumentBlock()]: "auto" },
+    marginLeft: { default: null, [inProjectDocument()]: 0 },
     color: { default: null, [inProse()]: tokens.ink },
     fontFamily: { default: null, [inProse()]: tokens.fontSerif },
     fontSize: { default: null, [inProse()]: fontSize.reading },
@@ -264,6 +274,7 @@ export const documentStyles = stylex.create({
   table: {
     width: { default: null, [inDocument()]: "min(100%, 600px)" },
     margin: { default: null, [inDocument()]: "24px auto" },
+    marginInline: { default: null, [inProjectDocument()]: 0 },
     borderCollapse: { default: null, [inDocument()]: "collapse" },
     color: { default: null, [inDocument()]: tokens.ink },
     fontFamily: { default: null, [inDocument()]: tokens.fontMono },
